@@ -1,0 +1,56 @@
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse
+from starlette.responses import RedirectResponse
+import os, datetime, sqlite3, traceback
+
+bp = APIRouter()
+
+def _log(msg:str):
+    p = os.path.join(os.getcwd(), "logs", "save.log")
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(f"[{datetime.datetime.now().isoformat()}] {msg}\n")
+
+@bp.post("/campaigns/save", response_class=HTMLResponse)
+async def campaigns_save(request: Request):
+    form = await request.form()
+    cid  = (form.get("id") or form.get("campaign_id") or "").strip()
+    name = (form.get("name") or form.get("campaign_name") or "").strip()
+    _log(f"POST /campaigns/save id={cid!r} name={name!r}")
+    if not cid.isdigit():
+        _log("invalid id → 303 /campaigns")
+        return RedirectResponse(url="/campaigns", status_code=303)
+
+    ok = False
+    try:
+        from app.services import crud
+        if hasattr(crud, "add"):
+            crud.add(id=int(cid), name=name); ok=True; _log("crud.add OK")
+        elif hasattr(crud, "add_campaign"):
+            crud.add_campaign(id=int(cid), name=name); ok=True; _log("crud.add_campaign OK")
+        else:
+            _log("crud.* not found")
+    except Exception as e:
+        _log("crud EXC: "+repr(e)+"\\n"+traceback.format_exc())
+
+    if not ok:
+        try:
+            dbp = os.path.join(os.getcwd(), "campaign_hub.db")
+            con = sqlite3.connect(dbp); cur = con.cursor()
+            cur.execute("CREATE TABLE IF NOT EXISTS campaigns (id INTEGER PRIMARY KEY, name TEXT)")
+            cur.execute("INSERT OR IGNORE INTO campaigns (id,name) VALUES (?,?)", (int(cid), name))
+            con.commit(); con.close(); _log(f"fallback insert OK -> {dbp}")
+        except Exception as e:
+            _log("fallback EXC: "+repr(e)+"\\n"+traceback.format_exc())
+
+    _log("303 → /campaigns")
+    return RedirectResponse(url="/campaigns", status_code=303)
+
+# Backward-compatible: если всё же зовут GET /campaigns/add — используем ту же логику
+@bp.get("/campaigns/add", response_class=HTMLResponse)
+def campaigns_add_compat(id: str = "", name: str = ""):
+    from starlette.requests import Request
+    class Dummy(Request): pass
+    async def fake_form(self): return {"id": id, "name": name}
+    Dummy.form = fake_form  # type: ignore
+    import anyio
+    return anyio.from_thread.run(campaigns_save, Dummy(scope={"type":"http"}))  # type: ignore

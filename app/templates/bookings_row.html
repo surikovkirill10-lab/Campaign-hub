@@ -1,0 +1,156 @@
+{# --------------------------------------------------------------------
+   bookings_row.html — <tr> одной строки таблицы.
+   Сохраняем по Enter в /bookings/{id}/patch.
+   "Клиент" редактирует колонку bookings.brand.
+   "Агентство" правим по названию (upsert в справочник agencies → agency_id).
+--------------------------------------------------------------------- #}
+
+{% macro fmt_num(x, digs=0) -%}
+  {%- if x is not defined or x is none -%}—{%- else -%}
+    {%- set s = ("{:,.%df}" % digs).format(x) -%}
+    {{- s.replace(",", " ").replace(".", ",") -}}
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro fmt_pct(x, digs=1) -%}
+  {%- if x is defined and x is not none -%}
+    {{- ("{:." ~ digs ~ "f}%").format(x*100).replace(".", ",") -}}
+  {%- else -%}—{%- endif -%}
+{%- endmacro %}
+
+{% macro num_input_val(x, multiplier=1) -%}
+  {%- if x is defined and x is not none -%}{{ (x*multiplier)|float }}{%- endif -%}
+{%- endmacro %}
+
+{# универсальный инлайн‑инпут (сохраняет по Enter) #}
+{% macro inline_input(row, field, value, type="text", step=None, placeholder="", cls="input is-small", align_right=False) -%}
+  <input
+    class="{{ cls }}{% if align_right %} has-text-right{% endif %}"
+    type="{{ type }}"
+    {% if step %} step="{{ step }}"{% endif %}
+    name="value"
+    value="{{ value if value is not none else '' }}"
+    placeholder="{{ placeholder }}"
+    hx-post="/bookings/{{ row.id }}/patch"
+    hx-vals='{"field":"{{ field }}"}'
+    hx-trigger="keyup[key=='Enter']"
+    hx-target="closest tr"
+    hx-swap="outerHTML">
+{%- endmacro %}
+
+{% macro inline_select(row, field, current, options) -%}
+  <div class="select is-small">
+    <select
+      name="value"
+      hx-post="/bookings/{{ row.id }}/patch"
+      hx-vals='{"field":"{{ field }}"}'
+      hx-trigger="change"
+      hx-target="closest tr"
+      hx-swap="outerHTML">
+      <option value="" {{ 'selected' if (current|default('', true) == '') }}>—</option>
+      {% for opt in options %}
+        <option value="{{ opt }}" {{ 'selected' if (current|default('', true) == opt) }}>{{ opt }}</option>
+      {% endfor %}
+    </select>
+  </div>
+{%- endmacro %}
+
+{# Значения с безопасным fallback.
+   ВАЖНО: показываем отредактированное b.brand, а если пусто — client_brand из выборки. #}
+{% set brand_val   = row.brand | default(row.client_brand, true) | default('', true) %}
+{% set agency_val  = row.agency_name  | default('', true) %}
+{% set sm_val      = row.sales_manager | default('', true) %}
+{% set camp_id_val = row.campaign_id  | default('', true) %}
+{% set sdate_val   = row.start_date   | default('', true) %}
+{% set edate_val   = row.end_date     | default('', true) %}
+{% set bud_net     = row.budget_client_net | default(none, true) %}
+{% set inv_val     = (row.inventory_fact is defined and row.inventory_fact is not none and row.inventory_fact)
+                     or (row.inventory_total_plan is defined and row.inventory_total_plan is not none and row.inventory_total_plan)
+                     or none %}
+{% set vz_val      = row.vz_percent | default(none, true) %}
+{% set format_val  = row.format | default('', true) %}
+{% set bm_val      = row.buying_model | default('', true) %}
+
+<tr id="booking-{{ row.id }}">
+  <!-- ID -->
+  <td class="is-narrow">{{ row.id }}</td>
+
+  <!-- Название -->
+  <td style="min-width: 26ch;">
+    {{ inline_input(row, "name", row.name, "text", None, "Название РК") }}
+  </td>
+
+  <!-- Клиент (бренд) => bookings.brand -->
+  <td style="min-width: 18ch;">
+    {{ inline_input(row, "brand", brand_val, "text", None, "Бренд/Клиент") }}
+  </td>
+
+  <!-- Агентство (по названию; на бэке это обновит agency_id) -->
+  <td style="min-width: 18ch;">
+    {{ inline_input(row, "agency_name", agency_val, "text", None, "Агентство") }}
+  </td>
+
+  <!-- Формат -->
+  <td style="min-width: 14ch;">
+    {{ inline_input(row, "format", format_val, "text", None, "Формат") }}
+  </td>
+
+  <!-- Модель закупки -->
+  <td style="min-width: 16ch;">
+    {{ inline_input(row, "buying_model", bm_val, "text", None, "Модель закупки") }}
+  </td>
+
+    <!-- Сейлз -->
+  <td class="is-narrow">
+    {{ inline_select(row, "sales_manager", sm_val, managers|default([], true)) }}
+  </td>
+
+  <!-- ID РК -->
+  <td style="min-width: 10ch; !important" class="is-narrow">
+    {{ inline_input(row, "campaign_id", camp_id_val, "number", "1") }}
+  </td>
+
+  <!-- Период -->
+  <td style="min-width: 22ch;">
+    <div class="field has-addons">
+      <p class="control">
+        {{ inline_input(row, "start_date", sdate_val, "date") }}
+      </p>
+      <p class="control"><span class="button is-static is-small">—</span></p>
+      <p class="control">
+        {{ inline_input(row, "end_date", edate_val, "date") }}
+      </p>
+    </div>
+  </td>
+
+  <!-- Бюджет (до НДС) -->
+  <td class="has-text-right" style="min-width: 16ch;">
+    {{ inline_input(row, "budget_client_net", bud_net is not none and fmt_num(bud_net, 2) or '', "text", None, "0") }}
+  </td>
+
+  <!-- Инвентарь (факт → план) -->
+  <td class="has-text-right" style="min-width: 14ch;">
+    {{ inline_input(row, "inventory_fact", inv_val is not none and fmt_num(inv_val, 0) or '', "text", None, "0") }}
+  </td>
+
+  <!-- СК (ВЗ%) — в БД хранится долей; в инпуте — проценты -->
+  <td class="is-narrow" style="min-width:12ch;">
+    <div class="field has-addons">
+      <p class="control is-expanded">
+        {{ inline_input(row, "vz_percent",
+                         vz_val is not none and num_input_val(vz_val, 100) or '',
+                         "number", "0.01", "", "input is-small has-text-right", True) }}
+      </p>
+      <p class="control"><span class="button is-static is-small">%</span></p>
+    </div>
+  </td>
+
+  <!-- Действия -->
+  <td class="is-narrow">
+    <a class="button is-small is-light" href="/bookings/{{ row.id }}">Детали</a>
+    <button class="button is-small is-danger is-light"
+            hx-post="/bookings/{{ row.id }}/delete"
+            hx-target="#booking-{{ row.id }}"
+            hx-swap="outerHTML">Удалить</button>
+  </td>
+</tr>

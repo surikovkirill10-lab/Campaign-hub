@@ -1,0 +1,174 @@
+from fastapi import APIRouter, Request, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from pathlib import Path
+import pandas as pd
+
+router = APIRouter()
+templates = Jinja2Templates(directory="app/templates")
+
+# --- helper: totals from latest_normalized.csv ---
+def _campaign_totals(cid: int):
+    p = Path("data") / "cats" / str(cid) / "latest_normalized.csv"
+    if not p.exists():
+        return None
+    df = pd.read_csv(p)
+    out = {}
+    out["impressions"] = int(df["impressions"].sum()) if "impressions" in df.columns else None
+    out["clicks"]      = int(df["clicks"].sum())      if "clicks"      in df.columns else None
+    out["uniques"]     = int(df["uniques"].sum())     if "uniques"     in df.columns else None
+    if "ctr_percent" in df.columns and len(df)>0:
+        out["ctr_ratio"] = float(df["ctr_percent"].mean())/100.0
+    elif "CTR" in df.columns and len(df)>0:
+        out["ctr_ratio"] = float(df["CTR"].mean())/100.0
+    else:
+        out["ctr_ratio"] = None
+    out["freq"] = float(df["freq"].mean()) if "freq" in df.columns and len(df)>0 else None
+    return out
+
+# --- list campaigns ---
+@router.get("/campaigns", response_class=HTMLResponse)
+def list_campaigns(request: Request):
+    """
+    Список кампаний:
+    1) пытаемся взять через crud.list_campaigns();
+    2) если пусто — читаем C:\...\campaign_hub.db (таблица campaigns) напрямую.
+    Затем подставляем Total из data/cats/<id>/latest_normalized.csv в поля основной строки.
+    """
+    campaigns = []
+
+    # 1) Штатный путь через crud (если есть)
+    try:
+        from app.services import crud
+        if hasattr(crud, "list_campaigns"):
+            campaigns = crud.list_campaigns()
+    except Exception:
+        campaigns = campaigns
+
+    # 2) Fallback: sqlite напрямую (только id,name)
+    if not campaigns:
+        try:
+            import sqlite3
+            con = sqlite3.connect("campaign_hub.db")
+            cur = con.cursor()
+            # проверим что таблица campaigns есть
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='campaigns'")
+            if cur.fetchone():
+                rows = cur.execute("SELECT id, name FROM campaigns ORDER BY id").fetchall()
+                # превратим строки в лёгкие объекты с нужными полями
+                class C: pass
+                cs = []
+                for cid, cname in rows:
+                    o = C()
+                    o.id = cid
+                    o.name = cname
+                    o.min_date = None; o.max_date = None
+                    o.impressions = None; o.clicks = None; o.uniques = None
+                    o.ctr_ext = None; o.freq = None; o.spend = None; o.conversions = None
+                    cs.append(o)
+                campaigns = cs
+            con.close()
+        except Exception:
+            campaigns = campaigns
+
+    # 3) Подставим Total из latest_normalized.csv
+    for c in campaigns:
+        try:
+            t = _campaign_totals(c.id)
+            if not t:
+                continue
+            if t.get("impressions") is not None: c.impressions = t["impressions"]
+            if t.get("clicks")      is not None: c.clicks      = t["clicks"]
+            if t.get("uniques")     is not None: c.uniques     = t["uniques"]
+            c.ctr_ext = t.get("ctr_ratio", getattr(c, "ctr_ext", None))
+            c.freq    = t.get("freq",      getattr(c, "freq", None))
+        except Exception:
+            continue
+
+    return templates.TemplateResponse("campaigns.html", {"request": request, "campaigns": campaigns})
+
+
+from fastapi.responses import HTMLResponse
+
+@router.post("/campaigns/{cid}/pull", response_class=HTMLResponse)
+def campaigns_pull(cid: int):
+    try:
+        from app.services.cats_export import export_and_ingest
+        res = export_and_ingest(str(cid))
+        t = _campaign_totals(cid) or {}
+        rows = res.get("ingest", {}).get("rows", "-")
+        badge = f'<span class="tag is-success">OK · {rows} rows</span> '
+
+        def span(k, v):
+            return f'<span id="{k}-{cid}" hx-swap-oob="true">{v}</span>'
+
+        imp  = t.get("impressions", "–")
+        clk  = t.get("clicks", "–")
+        uniq = t.get("uniques", "–")
+        ctr  = "{:.2%}".format(t["ctr_ratio"]) if t.get("ctr_ratio") is not None else "–"
+        freq = "{:.2f}".format(t["freq"])      if t.get("freq")      is not None else "–"
+
+        oob = "".join([span("imp", imp), span("clk", clk), span("uniq", uniq), span("ctr", ctr), span("freq", freq)])
+        return HTMLResponse(badge + oob)
+    except Exception as e:
+        return HTMLResponse(f'<span class="tag is-danger">FAIL</span> <small class="has-text-danger">{e}</small>', status_code=500)
+@router.get("/campaigns/{cid}/daily2", response_class=HTMLResponse)
+def campaigns_daily2(cid: int):
+    from pathlib import Path
+    import pandas as pd
+    p = Path("data") / "cats" / str(cid) / "latest_normalized.csv"
+    if not p.exists():
+        return HTMLResponse(f'<td colspan="11" id="details-{cid}"><p>No data (daily2)</p></td>')
+    df = pd.read_csv(p)
+
+    date_col = df["date"] if "date" in df.columns else df.get("День")
+    imp  = df["impressions"] if "impressions" in df.columns else df.get("Показы")
+    clk  = df["clicks"]      if "clicks"      in df.columns else df.get("Переходы")
+    uni  = df["uniques"]     if "uniques"     in df.columns else df.get("Охват")
+    ctrp = df["ctr_percent"] if "ctr_percent" in df.columns else df.get("CTR")
+    vtrp = df["vtr_percent"] if "vtr_percent" in df.columns else df.get("VTR")
+    freq = df["freq"]        if "freq"        in df.columns else None
+
+    def _num(x):
+        try: return float(str(x).replace(" ","").replace(",","."))
+        except: return None
+
+    if freq is None and imp is not None and uni is not None:
+        impn = imp.apply(_num); unin = uni.apply(_num)
+        freq = [round((i/u),2) if (i is not None and u and u>0) else None for i,u in zip(impn,unin)]
+
+    def fmt_pct(v):
+        if v is None: return "—"
+        try: return f"{float(v):.2f}%"
+        except: return "—"
+
+    def safe_int(x):
+        try: return int(x) if pd.notna(x) else "—"
+        except: return "—"
+
+    rows = []
+    for i in range(len(df.index)):
+        raw = date_col.iloc[i] if date_col is not None else None
+        d   = "Total" if (raw is None or str(raw).strip().lower() in ("nan","nat","")) else raw
+        im  = imp.iloc[i]  if imp  is not None and i < len(imp)  else None
+        ck  = clk.iloc[i]  if clk  is not None and i < len(clk)  else None
+        un  = uni.iloc[i]  if uni  is not None and i < len(uni)  else None
+        cp  = ctrp.iloc[i] if ctrp is not None and i < len(ctrp) else None
+        vp  = vtrp.iloc[i] if vtrp is not None and i < len(vtrp) else None
+        fq  = (freq[i] if isinstance(freq,list) and i < len(freq) else (freq.iloc[i] if hasattr(freq,'iloc') and i < len(freq) else None))
+
+        rows.append(
+            f"<tr><td>{d}</td><td>{safe_int(im)}</td><td>{safe_int(ck)}</td>"
+            f"<td>{fmt_pct(cp)}</td><td>{fmt_pct(vp)}</td><td>{safe_int(un)}</td>"
+            f"<td>{fq if fq is not None else '—'}</td></tr>"
+        )
+
+    inner = (
+        '<table class="table is-narrow is-striped is-fullwidth">'
+        '<thead><tr><th>Дата</th><th>Показы</th><th>Клики</th><th>CTR</th><th>VTR</th><th>Охват</th><th>Частота</th></tr></thead>'
+        '<tbody>' + ''.join(rows) + '</tbody></table>'
+    )
+    return HTMLResponse(f'<td colspan="11" id="details-{cid}" class="p-0">{inner}</td>')
+@router.get("/campaigns/{cid}/daily_empty", response_class=HTMLResponse)
+def campaigns_daily_empty(cid: int):
+    return HTMLResponse(f'<td colspan="11" id="details-{cid}"></td>')

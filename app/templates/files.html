@@ -1,0 +1,27 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="block">
+    <h2 class="subtitle">Processed files</h2>
+    <table class="table is-striped is-fullwidth">
+        <thead>
+            <tr>
+                <th>ID</th><th>Source</th><th>Campaign</th><th>Filename</th><th>Period</th><th>Rows</th><th>Status</th><th>Received at</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for f in files %}
+            <tr>
+                <td>{{ f.id }}</td>
+                <td>{{ f.source.value }}</td>
+                <td>{{ f.campaign_id or '—' }}</td>
+                <td>{{ f.filename }}</td>
+                <td>{% if f.period_from %}{{ f.period_from }} — {{ f.period_to }}{% else %}—{% endif %}</td>
+                <td>{{ f.rows or '—' }}</td>
+                <td>{{ f.status }}</td>
+                <td>{{ f.received_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

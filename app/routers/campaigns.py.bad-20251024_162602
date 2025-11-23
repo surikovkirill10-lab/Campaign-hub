@@ -1,0 +1,452 @@
+"""Routes related to campaigns and their metrics."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, Request, Form, Response, HTTPException
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+
+from sqlalchemy.orm import Session
+
+from ..database import get_db
+from ..crud import (
+    get_campaigns,
+    get_campaign,
+    create_campaign,
+)
+from ..models import Campaign, FactDaily
+from sqlalchemy import func
+from ..services.fetcher import download_system_file, fetch_mail_attachments
+from ..services.parser import parse_system_xlsx, parse_metrica_xlsx
+from ..services.joiner import update_facts_for_campaign
+from ..crud import create_source_file, create_raw_system_daily, create_raw_metrica_daily
+from ..models import SourceType
+from app.services.cats_export import export_and_ingest
+import pandas as pd
+from pathlib import Path
+
+import hashlib
+
+router = APIRouter()
+
+# Locate templates directory relative to this file
+templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
+
+
+@router.get("/campaigns", response_class=HTMLResponse)
+def list_campaigns(request: Request, db: Session = Depends(get_db)):
+    """Display a list of campaigns with aggregated totals."""
+    campaigns = []
+    for camp in get_campaigns(db):
+        # Aggregate totals from fact_daily
+        totals = db.query(
+            func.min(FactDaily.date).label("min_date"),
+            func.max(FactDaily.date).label("max_date"),
+            func.sum(FactDaily.impressions).label("impressions"),
+            func.sum(FactDaily.clicks).label("clicks"),
+            func.sum(FactDaily.spend).label("spend"),
+            func.sum(FactDaily.visits).label("visits"),
+            func.sum(FactDaily.conversions).label("conversions"),
+            func.avg(FactDaily.ctr_ext).label("ctr_ext"),
+            func.avg(FactDaily.cpc).label("cpc"),
+        ).filter(FactDaily.campaign_id == camp.id).one_or_none()
+        if totals:
+            campaigns.append(
+                {
+                    "id": camp.id,
+                    "name": camp.name,
+                    "min_date": totals.min_date,
+                    "max_date": totals.max_date,
+                    "impressions": totals.impressions,
+                    "clicks": totals.clicks,
+                    "spend": totals.spend,
+                    "visits": totals.visits,
+                    "conversions": totals.conversions,
+                    "ctr_ext": totals.ctr_ext,
+                    "cpc": totals.cpc,
+                }
+            )
+        else:
+            campaigns.append(
+                {
+                    "id": camp.id,
+                    "name": camp.name,
+                    "min_date": None,
+                    "max_date": None,
+                    "impressions": None,
+                    "clicks": None,
+                    "spend": None,
+                    "visits": None,
+                    "conversions": None,
+                    "ctr_ext": None,
+                    "cpc": None,
+                }
+            )
+    # --- fill totals from latest_normalized.csv for each campaign ---
+try:
+    for c in campaigns:
+        p = Path("data") / "cats" / str(c.id) / "latest_normalized.csv"
+        if not p.exists():
+            continue
+        df = pd.read_csv(p)
+        # суммы/средние из строки Total
+        c.impressions = int(df["impressions"].sum()) if "impressions" in df.columns else None
+        c.clicks      = int(df["clicks"].sum())      if "clicks"      in df.columns else None
+        c.uniques     = int(df["uniques"].sum())     if "uniques"     in df.columns else None
+        if "ctr_percent" in df.columns and len(df)>0:
+            c.ctr_ext = float(df["ctr_percent"].mean())/100.0
+        elif "CTR" in df.columns and len(df)>0:
+            c.ctr_ext = float(df["CTR"].mean())/100.0
+        else:
+            c.ctr_ext = None
+        c.freq = float(df["freq"].mean()) if "freq" in df.columns and len(df)>0 else None
+except Exception:
+    pass
+
+return templates.TemplateResponse("campaigns.html", {"request": request, "campaigns": campaigns})
+
+
+@router.post("/campaigns")
+def add_campaign(id: int = Form(...), name: str = Form(...), db: Session = Depends(get_db)):
+    """Create a new campaign."""
+    # Check if the campaign already exists
+    existing = get_campaign(db, id)
+    if not existing:
+        create_campaign(db, name=name, campaign_id=id)
+    return RedirectResponse(url="/campaigns", status_code=303)
+
+
+@router.post("/campaigns/{campaign_id}/update")
+def update_campaign(campaign_id: int, db: Session = Depends(get_db)):
+    """Fetch new files for a campaign and update the database.
+
+    This endpoint triggers both the system download and the mail fetcher.
+    Because external network access is disabled in this environment, the
+    functions only operate on local demonstration files.  To enable real
+    imports, place XLSX files in the `demo_data` folder and map them to
+    campaign IDs using `demo_system_files` and `demo_metrica_files` below.
+    """
+    campaign = get_campaign(db, campaign_id)
+    if not campaign:
+        return Response(status_code=404)
+    processed = 0
+    # 1. Download statistics from the internal system
+    result = download_system_file(campaign_id)
+    if result is not None:
+        records, min_date, max_date = parse_system_xlsx(result.content)
+        sf = create_source_file(
+            db=db,
+            source=SourceType.system,
+            sha256=result.sha256,
+            campaign=campaign,
+            message_id=None,
+            sender=None,
+            subject=None,
+            filename=result.filename,
+            period_from=min_date,
+            period_to=max_date,
+            rows=len(records),
+        )
+        create_raw_system_daily(db, sf, campaign, records)
+        processed += 1
+    # 2. Fetch e‑mail attachments via the campaign's mail rule
+    rule = campaign.mail_rule
+    if rule:
+        attachments = fetch_mail_attachments(rule)
+        for dl in attachments:
+            fname = dl.filename.lower()
+            if fname.endswith('.xlsx') or fname.endswith('.xls'):
+                records, min_date, max_date = parse_metrica_xlsx(dl.content)
+            elif fname.endswith('.csv'):
+                # CSV parsing without pandas. Decode bytes to string and use csv
+                import csv
+                from io import StringIO
+                from ..services.parser import parse_date
+                try:
+                    text = dl.content.decode('utf-8', errors='ignore')
+                except Exception:
+                    text = ''
+                records = []
+                min_date = None
+                max_date = None
+                if text:
+                    # Try to sniff the delimiter (comma, semicolon or tab)
+                    sample = text.splitlines()[:5]
+                    dialect = None
+                    try:
+                        dialect = csv.Sniffer().sniff("\n".join(sample))
+                    except Exception:
+                        # Fallback to comma
+                        dialect = csv.get_dialect('excel')
+                    reader = csv.DictReader(StringIO(text), dialect=dialect)
+                    for row in reader:
+                        # Normalize keys by stripping and lowercasing
+                        record = {}
+                        # Map possible column names to canonical keys
+                        date_val = row.get('Date') or row.get('Дата') or row.get('day') or row.get('Day') or row.get('date')
+                        visits_val = row.get('visits') or row.get('Визиты') or row.get('визиты')
+                        visitors_val = row.get('visitors') or row.get('Посетители') or row.get('users')
+                        bounces_val = row.get('bounces') or row.get('Отказы') or row.get('отказы')
+                        depth_val = row.get('depth') or row.get('Глубина просмотра') or row.get('average page depth')
+                        time_val = row.get('time_on_site') or row.get('Время на сайте') or row.get('average visit duration')
+                        conversions_val = row.get('conversions') or row.get('Конверсии') or row.get('post-click conversions')
+                        # Build record dict
+                        record['date'] = None
+                        if date_val:
+                            record_date = parse_date(str(date_val))
+                            record['date'] = record_date
+                            if record_date:
+                                if min_date is None or record_date < min_date:
+                                    min_date = record_date
+                                if max_date is None or record_date > max_date:
+                                    max_date = record_date
+                        # Convert numeric fields
+                        def to_int(v):
+                            if v is None or v == '':
+                                return None
+                            try:
+                                return int(float(str(v).replace(' ', '').replace(',', '.')))
+                            except Exception:
+                                return None
+                        def to_float(v):
+                            if v is None or v == '':
+                                return None
+                            try:
+                                return float(str(v).replace(' ', '').replace(',', '.'))
+                            except Exception:
+                                return None
+                        record['visits'] = to_int(visits_val)
+                        record['visitors'] = to_int(visitors_val)
+                        record['bounces'] = to_int(bounces_val)
+                        record['depth'] = to_float(depth_val)
+                        # Time on site: HH:MM:SS or mm:ss
+                        if time_val:
+                            s = str(time_val)
+                            try:
+                                parts = [float(p) for p in s.split(':')]
+                                seconds = 0
+                                if len(parts) == 3:
+                                    seconds = parts[0]*3600 + parts[1]*60 + parts[2]
+                                elif len(parts) == 2:
+                                    seconds = parts[0]*60 + parts[1]
+                                record['time_on_site'] = seconds
+                            except Exception:
+                                record['time_on_site'] = None
+                        else:
+                            record['time_on_site'] = None
+                        record['conversions'] = to_int(conversions_val)
+                        # Only append records that have a date
+                        if record.get('date'):
+                            records.append(record)
+            elif fname.endswith('.zip'):
+                # Extract zip archive and parse contained files (only xlsx/csv)
+                import zipfile
+                from io import BytesIO
+                records = []
+                min_date = None
+                max_date = None
+                try:
+                    with zipfile.ZipFile(BytesIO(dl.content)) as zf:
+                        for name in zf.namelist():
+                            if name.lower().endswith(('.xlsx', '.xls')):
+                                data = zf.read(name)
+                                recs, dmin, dmax = parse_metrica_xlsx(data)
+                                records.extend(recs)
+                                if dmin and (min_date is None or dmin < min_date):
+                                    min_date = dmin
+                                if dmax and (max_date is None or dmax > max_date):
+                                    max_date = dmax
+                            elif name.lower().endswith('.csv'):
+                                data = zf.read(name)
+                                import csv
+                                from io import StringIO
+                                from ..services.parser import parse_date
+                                try:
+                                    text = data.decode('utf-8', errors='ignore')
+                                except Exception:
+                                    text = ''
+                                if text:
+                                    sample = text.splitlines()[:5]
+                                    try:
+                                        dialect = csv.Sniffer().sniff("\n".join(sample))
+                                    except Exception:
+                                        dialect = csv.get_dialect('excel')
+                                    reader = csv.DictReader(StringIO(text), dialect=dialect)
+                                    for row in reader:
+                                        date_val = row.get('Date') or row.get('Дата') or row.get('day') or row.get('Day') or row.get('date')
+                                        visits_val = row.get('visits') or row.get('Визиты') or row.get('визиты')
+                                        visitors_val = row.get('visitors') or row.get('Посетители') or row.get('users')
+                                        bounces_val = row.get('bounces') or row.get('Отказы') or row.get('отказы')
+                                        depth_val = row.get('depth') or row.get('Глубина просмотра') or row.get('average page depth')
+                                        time_val = row.get('time_on_site') or row.get('Время на сайте') or row.get('average visit duration')
+                                        conversions_val = row.get('conversions') or row.get('Конверсии') or row.get('post-click conversions')
+                                        rec = {}
+                                        rec['date'] = None
+                                        if date_val:
+                                            record_date = parse_date(str(date_val))
+                                            rec['date'] = record_date
+                                            if record_date:
+                                                if min_date is None or record_date < min_date:
+                                                    min_date = record_date
+                                                if max_date is None or record_date > max_date:
+                                                    max_date = record_date
+                                        def to_int(v):
+                                            if v is None or v == '':
+                                                return None
+                                            try:
+                                                return int(float(str(v).replace(' ', '').replace(',', '.')))
+                                            except Exception:
+                                                return None
+                                        def to_float(v):
+                                            if v is None or v == '':
+                                                return None
+                                            try:
+                                                return float(str(v).replace(' ', '').replace(',', '.'))
+                                            except Exception:
+                                                return None
+                                        rec['visits'] = to_int(visits_val)
+                                        rec['visitors'] = to_int(visitors_val)
+                                        rec['bounces'] = to_int(bounces_val)
+                                        rec['depth'] = to_float(depth_val)
+                                        if time_val:
+                                            s = str(time_val)
+                                            try:
+                                                parts = [float(p) for p in s.split(':')]
+                                                seconds = 0
+                                                if len(parts) == 3:
+                                                    seconds = parts[0]*3600 + parts[1]*60 + parts[2]
+                                                elif len(parts) == 2:
+                                                    seconds = parts[0]*60 + parts[1]
+                                                rec['time_on_site'] = seconds
+                                            except Exception:
+                                                rec['time_on_site'] = None
+                                        else:
+                                            rec['time_on_site'] = None
+                                        rec['conversions'] = to_int(conversions_val)
+                                        if rec.get('date'):
+                                            records.append(rec)
+                except Exception:
+                    pass
+            else:
+                # Unsupported attachment
+                records = []
+                min_date = None
+                max_date = None
+            if records:
+                sf = create_source_file(
+                    db=db,
+                    source=SourceType.metrica,
+                    sha256=dl.sha256,
+                    campaign=campaign,
+                    message_id=None,
+                    sender=None,
+                    subject=None,
+                    filename=dl.filename,
+                    period_from=min_date,
+                    period_to=max_date,
+                    rows=len(records),
+                )
+                create_raw_metrica_daily(db, sf, campaign, records)
+                processed += 1
+    # 3. Recompute facts
+    if processed > 0:
+        update_facts_for_campaign(db, campaign_id)
+    return Response(status_code=204)
+
+
+@router.get("/campaigns/{campaign_id}/daily", response_class=HTMLResponse)
+def daily_details(request: Request, campaign_id: int, db: Session = Depends(get_db)):
+    """Return a table with daily fact rows for a campaign.
+
+    This route is used by HTMX to inject a snippet into the campaigns page.
+    """
+    rows = db.query(FactDaily).filter(FactDaily.campaign_id == campaign_id).order_by(FactDaily.date).all()
+    return templates.TemplateResponse(
+        "partials/daily_details.html",
+        {"request": request, "records": rows},
+    )
+
+@router.post("/campaigns/{cid}/pull", response_class=HTMLResponse)
+def campaigns_pull(cid: int):
+    try:
+        from app.services.cats_export import export_and_ingest
+        res = export_and_ingest(str(cid))
+        t = _campaign_totals(cid) or {}
+        rows = res.get("ingest",{}).get("rows", "-")
+        badge = f'<span class="tag is-success">OK · {rows} rows</span> '
+
+        def span(k, v):
+            return f'<span id="{k}-{cid}" hx-swap-oob="true">{v}</span>'
+
+        imp  = t.get("impressions", "–")
+        clk  = t.get("clicks", "–")
+        uniq = t.get("uniques", "–")
+        ctr  = "{:.2%}".format(t["ctr_ratio"]) if t.get("ctr_ratio") is not None else "–"
+        freq = "{:.2f}".format(t["freq"])      if t.get("freq")      is not None else "–"
+
+        oob = "".join([ span("imp",imp), span("clk",clk), span("uniq",uniq), span("ctr",ctr), span("freq",freq) ])
+        return HTMLResponse(badge + oob)
+    except Exception as e:
+        return HTMLResponse(f'<span class="tag is-danger">FAIL</span> <small class="has-text-danger">{e}</small>', status_code=500)
+
+@router.get("/campaigns/{cid}/daily2", response_class=HTMLResponse)
+def campaigns_daily2(cid: int):
+    p = Path.cwd() / "data" / "cats" / str(cid) / "latest_normalized.csv"
+    if not p.exists():
+        return HTMLResponse(f'<td colspan="11" id="details-{cid}"><p>No data (daily2)</p></td>')
+    df = pd.read_csv(p)
+
+    date_col = df["date"] if "date" in df.columns else df.get("День")
+    imp  = df["impressions"] if "impressions" in df.columns else df.get("Показы")
+    clk  = df["clicks"] if "clicks" in df.columns else df.get("Переходы")
+    uni  = df["uniques"] if "uniques" in df.columns else df.get("Охват")
+    ctrp = df["ctr_percent"] if "ctr_percent" in df.columns else df.get("CTR")
+    vtrp = df["vtr_percent"] if "vtr_percent" in df.columns else df.get("VTR")
+    freq = df["freq"] if "freq" in df.columns else None
+
+    def _num(x):
+        try: return float(str(x).replace(" ","").replace(",",".")) 
+        except: return None
+
+    if freq is None and imp is not None and uni is not None:
+        impn = imp.apply(_num); unin = uni.apply(_num)
+        freq = [round((i/u),2) if (i is not None and u and u>0) else None for i,u in zip(impn,unin)]
+
+    def fmt_pct(v): 
+        if v is None: return "—"
+        try: return f"{float(v):.2f}%"
+        except: return "—"
+
+    def safe_int(x):
+        try: return int(x) if pd.notna(x) else "—"
+        except: return "—"
+
+    rows = []
+    n = len(df.index)
+    for i in range(n):
+        raw = (date_col.iloc[i] if date_col is not None and i < len(date_col) else None)
+        d   = "Total" if (raw is None or str(raw).strip().lower() in ("nan","nat","")) else raw
+        im  = (imp.iloc[i]  if imp  is not None and i < len(imp)  else "—")
+        ck  = (clk.iloc[i]  if clk  is not None and i < len(clk)  else "—")
+        un  = (uni.iloc[i]  if uni  is not None and i < len(uni)  else "—")
+        cp  = (ctrp.iloc[i] if ctrp is not None and i < len(ctrp) else None)
+        vp  = (vtrp.iloc[i] if vtrp is not None and i < len(vtrp) else None)
+        fq  = (freq[i] if isinstance(freq,list) and i < len(freq) else (freq.iloc[i] if hasattr(freq,"iloc") and i < len(freq) else None))
+        rows.append(
+            f"<tr><td>{d}</td><td>{safe_int(im)}</td><td>{safe_int(ck)}</td>"
+            f"<td>{fmt_pct(cp)}</td><td>{fmt_pct(vp)}</td><td>{safe_int(un)}</td>"
+            f"<td>{fq if fq is not None else '—'}</td></tr>"
+        )
+
+    inner = (
+      '<table class="table is-narrow is-striped is-fullwidth">'
+      '<thead><tr><th>Дата</th><th>Показы</th><th>Клики</th><th>CTR</th><th>VTR</th><th>Охват</th><th>Частота</th></tr></thead>'
+      '<tbody>' + ''.join(rows) + '</tbody></table>'
+    )
+    return HTMLResponse(f'<td colspan="11" id="details-{cid}" class="p-0">{inner}</td>')
+
+@router.get("/campaigns/{cid}/daily_empty", response_class=HTMLResponse)
+def campaigns_daily_empty(cid: int):
+    return HTMLResponse(f'<td colspan="11" id="details-{cid}"></td>')

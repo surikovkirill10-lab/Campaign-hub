@@ -1,0 +1,27 @@
+<div class="box">
+  <h4 class="title is-5">Детали: {{ row.name }}</h4>
+  <div class="columns">
+    <div class="column">
+      <p><strong>Клиент:</strong> {{ row.client_id or "—" }}</p>
+      <p><strong>Агентство:</strong> {{ row.agency_id or "—" }}</p>
+      <p><strong>Период:</strong> {{ row.start_date or "—" }} — {{ row.end_date or "—" }}</p>
+      <p><strong>Бюджет (до НДС):</strong> {{ row.budget_client_net or "—" }}</p>
+    </div>
+    <div class="column">
+      <p><strong>ID РК (Campaigns):</strong> {{ row.campaign_id or "—" }}</p>
+      {% if camp %}
+        <p><strong>Кампания:</strong> {{ camp['name'] }}</p>
+        <p><strong>Период РК:</strong> {{ camp['min_date'] }} — {{ camp['max_date'] }}</p>
+        <div class="mt-2">
+          <button type="button" class="button is-small is-light"
+                  hx-get="/campaigns/{{ row.campaign_id }}/daily5"
+                  hx-target="#daily5-{{ row.id }}"
+                  hx-swap="outerHTML">Показать daily5</button>
+        </div>
+      {% else %}
+        <p class="has-text-grey">Кампания не привязана. Укажите ID РК в таблице.</p>
+      {% endif %}
+    </div>
+  </div>
+  <div id="daily5-{{ row.id }}"></div>
+</div>

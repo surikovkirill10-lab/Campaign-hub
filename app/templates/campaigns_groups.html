@@ -1,0 +1,242 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<style>
+  :root{
+    --nav-min: 180px;
+    --navW: max(10vw, var(--nav-min));
+    --topbar-h: 72px; /* подстройте под реальную высоту шапки */
+  }
+
+  html, body { overflow-x: hidden; }
+
+  /* Левое меню — фиксированное, с отступом под шапку */
+  .cmpx-nav{
+    position: fixed; left:0; top:0; bottom:0;
+    width: var(--navW);
+    background:#303030; color:#fff;
+    padding: calc(var(--topbar-h) + 8px) .5rem .75rem;
+    z-index: 20;
+  }
+  .cmpx-nav h3{ color:#fff; font-size:.85rem; text-transform:uppercase; opacity:.8; margin:.25rem .75rem; }
+  .cmpx-nav a{ color:#fff; display:block; padding:.5rem .75rem; border-radius:4px; text-decoration:none; font-weight:500; margin-bottom:.25rem; }
+  .cmpx-nav a.is-active{ color:#00cccc; background:rgba(255,255,255,.08); }
+
+  /* ПРАВАЯ КОЛОНКА
+     1) box-sizing: border-box — ширина включает padding (КЛЮЧЕВОЕ)
+     2) width на оставшуюся часть экрана, лёгкие внутренние отступы */
+  .cmpx-main{
+    margin-left: var(--navW);
+    width: calc(90vw - var(--navW));
+    padding: 5px 5px 5px;
+    box-sizing: border-box;          /* <<< ключ: чтобы padding не "вылазил" за ширину */
+    overflow-x: hidden;
+  }
+
+  /* Снять ограничения контейнеров Bulma внутри правой колонки */
+  .cmpx-main .section, .cmpx-main .container{
+    max-width: none !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box;
+  }
+
+  /* Тулбар — чтобы не "резался", переносился и не выходил за 100% */
+  #toolbar{ max-width:100%; overflow:visible; box-sizing:border-box; }
+  #toolbar .field.is-grouped{ flex-wrap: wrap; gap: .5rem .5rem; } /* жёстко включаем перенос */
+  #toolbar .control.is-expanded{ flex: 1 1 260px; min-width: 260px; } /* строка поиска тянется */
+  #toolbar .control{ flex: 0 0 auto; } /* остальные элементы — по содержимому */
+
+  /* Таблица может скроллиться по X, шапка липкая */
+  #campaigns-table{ overflow-x:auto; overflow-y:visible; position:relative; -webkit-overflow-scrolling:touch; }
+  #campaigns-table > table{ width:max-content; min-width:1200px; }
+  #campaigns-table th, #campaigns-table td{ white-space:nowrap; }
+  #campaigns-table td:nth-child(2){ white-space:normal; }
+  #campaigns-table thead th{ position:sticky; top:0; z-index:4; background:#fff; box-shadow:0 1px 0 rgba(0,0,0,.06); }
+
+  /* ваши компактные размеры контролов */
+  #toolbar .field.is-grouped .control{ margin-right:.5rem; }
+  #toolbar .field.is-grouped .control:last-child{ margin-right:0; }
+  #toolbar .input.is-small, #toolbar .select.is-small select, #toolbar .button.is-small{ height:2.25em; }
+  #toolbar .mb-2{ margin-bottom:.5rem; }
+</style>
+
+<div class="cmpx-layout">
+  <aside class="cmpx-nav">
+    <h3>Menu</h3>
+    <a href="/campaigns">Campaigns</a>
+    <a href="/campaigns/groups" class="is-active">Groups</a>
+    <a href="/campaigns/creatives">Creatives</a>
+  </aside>
+
+  <main class="cmpx-main">
+    <h2 class="title is-5">Campaign groups</h2>
+
+    <!-- Create group -->
+    <div class="box">
+      <h3 class="subtitle is-6">Create a group</h3>
+      <div class="field is-grouped">
+        <div class="control is-expanded">
+          <input id="g_name" class="input" type="text" placeholder="Group name (e.g., Verifier: Richard OLV Oct–Nov)">
+        </div>
+      </div>
+
+      <label class="label">Campaign IDs</label>
+      <div id="tokens" class="tokens">
+        <input id="token-input" type="number" placeholder="Type ID and press Enter">
+      </div>
+      <p class="help">Press Enter or comma to add ID. Click × to remove.</p>
+
+      <div class="mt-3">
+        <button class="button is-link" onclick="createGroup()">Create group</button>
+        <span id="g_result" class="tag is-light">—</span>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <form class="mb-3" hx-get="/campaigns/groups" hx-target="#groups-table" hx-select="#groups-table" hx-swap="outerHTML" hx-push-url="true">
+      <div class="field is-grouped is-align-items-center">
+        <div class="control">
+          <input class="input is-small" type="text" name="q" value="{{ q or '' }}" placeholder="Search by ID / name" hx-trigger="keyup changed delay:300ms">
+        </div>
+        <div class="control">
+          <div class="select is-small">
+            <select name="sort" hx-trigger="change">
+              <option value="id"        {{ 'selected' if (sort or 'id')=='id' }}>ID</option>
+              <option value="name"      {{ 'selected' if sort=='name' }}>Name</option>
+              <option value="impr"      {{ 'selected' if sort=='impr' }}>Impressions</option>
+              <option value="clk"       {{ 'selected' if sort=='clk' }}>Clicks</option>
+              <option value="reach"     {{ 'selected' if sort=='reach' }}>Reach</option>
+              <option value="ctr"       {{ 'selected' if sort=='ctr' }}>CTR</option>
+              <option value="freq"      {{ 'selected' if sort=='freq' }}>Frequency</option>
+              <option value="vtr"       {{ 'selected' if sort=='vtr' }}>VTR</option>
+            </select>
+          </div>
+        </div>
+        <div class="control">
+          <div class="select is-small">
+            <select name="dir" hx-trigger="change">
+              <option value="desc" {{ 'selected' if (dir or 'desc')=='desc' }}>Desc</option>
+              <option value="asc"  {{ 'selected' if dir=='asc' }}>Asc</option>
+            </select>
+          </div>
+        </div>
+        <div class="control">
+          <button class="button is-small">Apply</button>
+        </div>
+      </div>
+    </form>
+
+    <!-- Groups table -->
+    <div id="groups-table">
+      <table class="table is-striped is-fullwidth">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>#Members</th>
+            <th>Impressions</th>
+            <th>Clicks</th>
+            <th>Reach</th>
+            <th>CTR</th>
+            <th>Frequency</th>
+            <th>VTR</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for g in groups %}
+          <tr>
+            <td>{{ g.id }}</td>
+            <td>{{ g.name }}</td>
+            <td>{{ g.members }}</td>
+            <td>{{ g.impr or 0 }}</td>
+            <td>{{ g.clk  or 0 }}</td>
+            <td>{{ g.reach or 0 }}</td>
+            <td>{{ "%.2f%%"|format(g.ctr*100) if g.ctr is not none else "—" }}</td>
+            <td>{{ "%.2f"|format(g.freq) if g.freq is not none else "—" }}</td>
+            <td>{{ "%.2f%%"|format(g.vtr*100) if g.vtr is not none else "—" }}</td>
+            <td class="is-narrow">
+              <a class="button is-small is-light" href="/campaigns/groups/{{ g.id }}/daily">Details</a>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not groups %}
+          <tr><td colspan="10">No groups yet.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<script>
+  // --- tokens input (ID list like email recipients) ---
+  const tokens = new Set();
+  const box = document.getElementById('tokens');
+  const input = document.getElementById('token-input');
+  const result = document.getElementById('g_result');
+
+  function renderTokens() {
+    box.querySelectorAll('.token').forEach(el => el.remove());
+    tokens.forEach(id => {
+      const el = document.createElement('span');
+      el.className = 'token';
+      el.dataset.id = id;
+      el.innerHTML = id + ' <span class="x" title="remove">×</span>';
+      el.querySelector('.x').onclick = () => { tokens.delete(id); renderTokens(); };
+      box.insertBefore(el, input);
+    });
+  }
+  function addToken(raw) {
+    const v = (raw || '').trim();
+    if (!v) return;
+    if (!/^\d+$/.test(v)) { flash('Only numeric IDs'); return; }
+    tokens.add(String(parseInt(v,10)));
+    renderTokens();
+  }
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ',' ) {
+      e.preventDefault();
+      addToken(input.value);
+      input.value = '';
+    } else if (e.key === 'Backspace' && !input.value) {
+      const last = Array.from(tokens).pop();
+      if (last) { tokens.delete(last); renderTokens(); }
+    }
+  });
+
+  function flash(msg, good=false) {
+    result.className = 'tag ' + (good ? 'is-success is-light' : 'is-danger is-light');
+    result.textContent = msg;
+  }
+
+  async function createGroup() {
+    const name = document.getElementById('g_name').value.trim();
+    if (!name) { flash('Name is required'); return; }
+    if (!tokens.size) { flash('Add at least one campaign ID'); return; }
+    const ids = Array.from(tokens);
+    const resp = await fetch('/campaigns/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, campaign_ids: ids })
+    });
+    if (!resp.ok) {
+      const t = await resp.json().catch(()=>({error:'Error'}));
+      flash(t.error || 'Error');
+      // Подсветка неверных ID (если вернулись)
+      if (t.bad_ids) {
+        // помечаем токены с ошибками
+        box.querySelectorAll('.token').forEach(el => {
+          const id = el.dataset.id;
+          if (t.bad_ids.includes(id) || t.bad_ids.includes(parseInt(id))) el.classList.add('bad');
+        });
+      }
+      return;
+    }
+    flash('Group created', true);
+    setTimeout(()=> location.reload(), 600);
+  }
+</script>
+{% endblock %}

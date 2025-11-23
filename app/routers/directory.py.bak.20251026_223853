@@ -1,0 +1,23 @@
+"""Routes for the directory (campaign/mail rule mappings)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+
+from sqlalchemy.orm import Session
+
+from ..database import get_db
+from ..crud import get_campaigns
+
+router = APIRouter()
+templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
+
+
+@router.get("/directory", response_class=HTMLResponse)
+def view_directory(request: Request, db: Session = Depends(get_db)):
+    campaigns = get_campaigns(db)
+    return templates.TemplateResponse("directory.html", {"request": request, "campaigns": campaigns})

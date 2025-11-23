@@ -1,0 +1,69 @@
+system:
+  base_url: https://catsnetwork.ru/iface/campaigns/stat/uniques/
+  connect_url: https://catsnetwork.ru/iface/
+  auth:
+    type: form
+    username: Campaign_hub
+    password: Beehive4
+    form:
+      login_url: https://catsnetwork.ru/iface/home/login/
+      username_field: login
+      password_field: pass
+      submit_name: login_submit
+      extra_fields:
+        action: signin
+      success_check:
+        url_contains: /iface
+  cats:
+    download:
+      url_template: https://catsnetwork.ru/iface/campaigns/stat/uniques/{id}?&export=xlsx
+      method: GET
+      format: xlsx
+      filename_field: Content-Disposition
+      column_map:
+        date:
+        - Дата
+        - Date
+        campaign_id:
+        - ID кампании
+        - CampaignId
+        - ID
+        campaign_name:
+        - Кампания
+        - Название кампании
+        impressions:
+        - Показы
+        - Impressions
+        clicks:
+        - Клики
+        - Clicks
+        uniques:
+        - Уники
+        - Uniques
+        ctr:
+        - CTR
+        - CTR, %
+        bounce_rate:
+        - Отказы
+        - BounceRate
+        - Отказы, %
+        spend:
+        - Расход
+        - Затраты, ₽
+        - Spend
+imap:
+  host: imap.yandex.com
+  port: 993
+  user: inlab.analytics@yandex.com
+  password: rvibdeemvizadtkz
+  mailbox: INBOX
+  two_factor: app_password
+yandex_campaigns:
+id: 13881
+  yandex_name: Pesto2flight_Inlab
+- id: 13995
+  yandex_name: Pesto2flight_Inlab
+- id: 13867
+  yandex_name: 8723_Epica__sept-oct__Innlab_report
+- id: 13978
+  yandex_name: ЯМ_Л1_Загляденье_Innovation lab_октябрь_2025_ежедневные

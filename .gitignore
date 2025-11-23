@@ -1,0 +1,33 @@
+# зависимости
+node_modules/
+
+# сборка
+dist/
+build/
+
+# окружение/секреты
+.env
+.env.local
+.env.*.local
+
+# логи
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log
+
+# система / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# python (на всякий)
+__pycache__/
+*.pyo
+*.pyd
+venv/
+.venv/
+config.yaml

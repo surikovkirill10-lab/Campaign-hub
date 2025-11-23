@@ -1,0 +1,28 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="box">
+  <h2 class="subtitle">Application Logs</h2>
+  <form method="get" action="/logs" class="field is-grouped">
+    <div class="control">
+      <label class="label">Tail</label>
+      <input class="input" name="n" value="{{ n }}" style="width:80px" type="number" min="10" max="5000">
+    </div>
+    <div class="control">
+      <label class="label">Filter</label>
+      <input class="input" name="q" value="{{ q }}" style="width:200px" type="text" placeholder="substring">
+    </div>
+    <div class="control" style="align-self:flex-end">
+      <button class="button is-link" type="submit">Show</button>
+    </div>
+  </form>
+
+  {# первый рендер — статическое тело #}
+  {% include "partials/log_body.html" %}
+
+  {# авто-обновление ТОЛЬКО тела логов: запросит /logs/fragment и заменит <pre id="log-body"> #}
+  <div hx-get="/logs/fragment?n={{ n }}&q={{ q|urlencode }}"
+       hx-trigger="every 2s"
+       hx-target="#log-body"
+       hx-swap="outerHTML"></div>
+</div>
+{% endblock %}

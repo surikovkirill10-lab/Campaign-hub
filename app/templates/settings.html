@@ -1,0 +1,68 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="box">
+  <h2 class="subtitle">Settings</h2>
+  {% if saved %}<div class="notification is-success">Settings saved successfully.</div>{% endif %}
+  <form method="post" action="/settings/save">
+    <div class="columns">
+      <div class="column">
+        <h3 class="title is-5">System</h3>
+        <label class="label">Base URL</label>
+        <input class="input" name="system_base_url" type="text" value="{{ s.system.base_url if s.system else '' }}">
+        <label class="label">Connect URL (optional)</label>
+        <input class="input" name="system_connect_url" type="text" value="{{ s.system.connect_url if s.system and s.system.connect_url else '' }}">
+        <label class="label">Login</label>
+        <input class="input" name="system_username" type="text" value="{{ s.system.auth.username if s.system and s.system.auth else '' }}">
+        <label class="label">Password</label>
+        <input class="input" name="system_password" type="text" value="{{ s.system.auth.password if s.system and s.system.auth else '' }}">
+      </div>
+      <div class="column">
+        <h3 class="title is-5">IMAP</h3>
+        <label class="label">Host</label>
+        <input class="input" name="imap_host" value="{{ s.imap.host if s.imap else 'imap.yandex.ru' }}">
+        <label class="label">Port</label>
+        <input class="input" name="imap_port" value="{{ s.imap.port if s.imap else 993 }}">
+        <label class="label">User</label>
+        <input class="input" name="imap_user" value="{{ s.imap.user if s.imap else '' }}">
+        <label class="label">Password / App password</label>
+        <input class="input" name="imap_password" type="text" value="{{ s.imap.password if s.imap else '' }}">
+        <p class="help">If 2FA is enabled — use <b>app password</b> for IMAP.</p>
+        <label class="label">Mailbox</label>
+        <input class="input" name="imap_mailbox" value="{{ s.imap.mailbox if s.imap and s.imap.mailbox else 'INBOX' }}">
+        <label class="label">Two-factor mode</label>
+        <select class="select" name="imap_two_factor">
+          {% set mode = s.imap.two_factor if s.imap else 'none' %}
+          <option value="none" {% if mode=='none' %}selected{% endif %}>none</option>
+          <option value="app_password" {% if mode=='app_password' %}selected{% endif %}>app_password</option>
+        </select>
+      </div>
+    </div>
+    <button class="button is-primary" type="submit">Save</button>
+  </form>
+
+  <!-- Manual connection controls for Catsnetwork and IMAP -->
+  <div class="columns" style="margin-top:1rem;">
+    <div class="column">
+      <h5>Catsnetwork</h5>
+      <!-- The connect button and status for Catsnetwork will be dynamically replaced by /cats/front/ping -->
+      <div id="cats-front-conn">
+        <button class="button is-info" hx-get="/cats/front/ping" hx-target="#cats-front-conn" hx-swap="outerHTML">Подключиться</button>
+        <span class="badge bg-secondary">Cats: status unknown</span>
+      </div>
+    </div>
+    <div class="column">
+      <h5>IMAP</h5>
+      <!-- The connect button and status for IMAP will be dynamically replaced by /imap/ping -->
+      <div id="imap-status">
+        <button class="button is-info" hx-get="/imap/ping" hx-target="#imap-status" hx-swap="outerHTML">Подключиться</button>
+        <span class="badge bg-secondary">IMAP: status unknown</span>
+      </div>
+    </div>
+  </div>
+
+  <h3 class="title is-5" style="margin-top:20px;">IMAP directories</h3>
+  <div id="imap-folders" hx-get="/settings/imap/folders" hx-trigger="load" hx-target="#imap-folders" hx-swap="innerHTML">
+    <progress class="progress is-small is-info" max="100">Loading…</progress>
+  </div>
+</div>
+{% endblock %}

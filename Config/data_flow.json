@@ -1,0 +1,9 @@
+{
+  "paths": {
+    "cats_csv_template": "data/cats/{campaign_id}/latest_normalized.csv",
+    "yandex_db_path": "yandex_metrics.db",
+    "campaign_db_path": "campaign_hub.db",
+    "show_raw_layer": true
+  },
+  "metrics": {}
+}

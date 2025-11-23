@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Campaign Hub</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script src="https://unpkg.com/htmx.org@1.9.5"></script>
+<link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', path='/css/app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}">
+</head>
+<body>
+<div class="topbar">
+  <div class="wrap container">
+    <a class="brand" href="/campaigns">
+      <img src="{{ url_for('static', path='img/logo.svg') }}" alt="Logo">
+      <span>Campaign&nbsp;Hub</span>
+    </a>
+    <nav class="topnav">
+      <a href="/campaigns" class="{% if request.url.path.startswith('/campaigns') %}active{% endif %}">Campaigns</a>
+      <a href="/directory" class="{% if request.url.path.startswith('/directory') %}active{% endif %}">Directory</a>
+      <a href="/files"     class="{% if request.url.path.startswith('/files')     %}active{% endif %}">Files</a>
+      <a href="/settings"  class="{% if request.url.path.startswith('/settings')  %}active{% endif %}">Settings</a>
+      <a href="/logs"      class="{% if request.url.path.startswith('/logs')      %}active{% endif %}">Logs</a>
+    </nav>
+  </div>
+</div>
+<main class="page-shell">
+    <section class="section">
+        <div class="container">
+            
+</div>
+<div class="page-shell">{% block content %}</div>
+{% endblock %}
+        </div>
+    </section>
+
+<script src="{{ url_for('static', filename='js/postclick.js') }}"></script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+

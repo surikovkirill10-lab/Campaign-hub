@@ -1,0 +1,72 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="block">
+  <form class="box" action="/campaigns" method="get">
+    <div class="field is-grouped">
+      <p class="control"><input class="input" placeholder="Campaign ID" required type="number" name="add" id="campaign_id"></p>
+      <p class="control"><input class="input" type="text"   placeholder="Campaign Name" required name="name"></p>
+      <p class="control"><button class="button is-link" type="submit">Add</button></p>
+    </div>
+  </form>
+</div>
+
+<table class="table is-striped is-fullwidth">
+  <thead>
+    <tr>
+      <th>ID</th><th>Name</th><th>Период</th><th>Показы</th><th>Клики</th>
+      <th>Расход</th><th>Охват</th><th>Конверсии</th><th>CTR</th><th>Частота</th><th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in campaigns %}
+    <tr>
+      <td>{{ row.id }}</td>
+      <td>{{ row.name }}</td>
+      <td>
+        {% if row.min_date and row.max_date %}{{ row.min_date }} — {{ row.max_date }}{% else %}—{% endif %}
+      </td>
+
+      <!-- тоталы в основной строке ОТОБРАЖАЮТСЯ через oob-обновление этих span -->
+      <td><span id="imp-{{ row.id }}">{{ row.impressions or "–" }}</span></td>
+      <td><span id="clk-{{ row.id }}">{{ row.clicks or "–" }}</span></td>
+      <td>{{ row.spend or "–" }}</td>
+      <td><span id="uniq-{{ row.id }}">{{ row.uniques or "–" }}</span></td>
+      <td>{{ row.conversions or "–" }}</td>
+      <td><span id="ctr-{{ row.id }}">{{ "%.2f%%"|format(row.ctr_ext*100) if (row.ctr_ext is defined and row.ctr_ext is not none) else "–" }}</span></td>
+      <td><span id="freq-{{ row.id }}">{{ "%.2f"|format(row.freq) if (row.freq is defined and row.freq is not none) else "–" }}</span></td>
+
+      <td>
+        <button type="button" class="button is-info is-small" hx-post="/campaigns/{{ row.id }}/pull" hx-target="#camp-{{ row.id }}-status" hx-swap="innerHTML">
+          Update
+        </button>
+
+        <span id="camp-{{ row.id }}-status" class="tag is-light">—</span>
+
+        <button type="button" class="button is-small is-light" hx-get="/campaigns/{{ row.id }}/daily2" hx-target="#details-{{ row.id }}" hx-swap="outerHTML"><span hx-indicator="#details-{{ row.id }}">Details</span></button>
+
+        <button
+          class="button is-small is-light is-danger is-outlined"
+          hx-get="/campaigns/{{ row.id }}/daily_empty"
+          hx-target="#details-{{ row.id }}"
+          hx-swap="outerHTML">
+          Hide
+        </button>
+      </td>
+    </tr>
+
+    <!-- контейнер под Details -->
+    <tr><td colspan="11" id="details-{{ row.id }}"></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+
+
+
+
+
+
+
+
+

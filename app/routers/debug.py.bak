@@ -1,0 +1,35 @@
+# app/routers/debug.py
+from fastapi import APIRouter
+from app.services.config_store import get_effective_imap_config, get_effective_system_config
+
+router = APIRouter()
+
+@router.get("/debug/imap")
+def debug_imap():
+    cfg = get_effective_imap_config("config.yaml")
+    u = cfg.get("user") or ""
+    p = cfg.get("password") or ""
+    return {
+        "user_repr": repr(u),
+        "user_len": len(u),
+        "pass_len": len(p),
+        "two_factor": cfg.get("two_factor"),
+        "host": cfg.get("host"),
+        "port": cfg.get("port"),
+    }
+
+@router.get("/debug/system")
+def debug_system():
+    sys = get_effective_system_config("config.yaml")
+    auth = sys.get("auth") or {}
+    return {
+        "base_url": sys.get("base_url"),
+        "connect_url": sys.get("connect_url"),
+        "auth": {
+            "type": auth.get("type"),
+            "username": auth.get("username"),
+            "password_len": len(auth.get("password") or ""),
+            "has_form": bool((auth.get("form") or {})),
+            "form": (auth.get("form") or {})
+        },
+    }

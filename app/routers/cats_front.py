@@ -1,0 +1,57 @@
+# app/routers/cats_front.py
+from fastapi import APIRouter, Query, Query
+from fastapi.responses import HTMLResponse, JSONResponse
+from app.services.cats_front import cats_front_ping
+
+router = APIRouter()
+
+@router.get("/cats/front/ping", response_class=HTMLResponse)
+def cats_front_ping_endpoint(verbose: bool = Query(False)) -> HTMLResponse:
+    """
+    Perform a one‑time login check against the Cats network front‑end and
+    return a small HTML snippet containing a "connect" button along with
+    a status indicator.  The snippet replaces the contents of the
+    ``#cats-front-conn`` div when invoked via HTMX.  On each request we
+    attempt to log in using the configured form parameters.  Success and
+    failure are indicated with a green or red badge respectively.  The
+    connect button remains to allow the user to re‑check the status on
+    demand.  Automatic polling is intentionally omitted so that the user
+    controls when checks occur.
+    """
+    data = cats_front_ping()
+    ok = bool(data.get("ok"))
+    # Build the common HTML for the connect button.  When clicked it
+    # triggers this endpoint again, updating the ``#cats-front-conn`` div.
+    button_html = (
+        '<button class="button is-info" hx-get="/cats/front/ping" '
+        'hx-target="#cats-front-conn" hx-swap="outerHTML">Подключиться</button>'
+    )
+    if ok:
+        elapsed = data.get("elapsed_ms") or 0
+        status_html = (
+            f'<span class="badge bg-success">Cats: OK</span> '
+            f'<small class="text-muted">{elapsed} ms</small>'
+        )
+    else:
+        err = data.get("error") or data.get("status_code") or "error"
+        # Ensure the error is a simple string to avoid injection into the HTML
+        err_str = str(err).replace("<", "&lt;").replace(">", "&gt;")
+        status_html = (
+            f'<span class="badge bg-danger">Cats: FAIL</span> '
+            f'<small class="text-muted">{err_str}</small>'
+        )
+    html = f'<div id="cats-front-conn">{button_html}&nbsp;{status_html}</div>'
+    return HTMLResponse(html)
+
+@router.get("/cats/front/preview")
+def cats_front_preview_endpoint():
+    """
+    Return the exact form payload (masked) that would be sent to Cats on login,
+    without performing the POST. Helpful for debugging field names and values.
+    """
+    from app.services.cats_front import cats_front_preview
+    data = cats_front_preview(timeout=15.0)
+    return JSONResponse(data)
+
+
+

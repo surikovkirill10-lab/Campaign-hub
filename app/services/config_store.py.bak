@@ -1,0 +1,103 @@
+from pathlib import Path
+from typing import Any, Dict
+import yaml
+
+CONFIG_PATH = Path("config.yaml")
+
+def load_raw() -> Dict[str, Any]:
+    if CONFIG_PATH.exists():
+        try:
+            with CONFIG_PATH.open("r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        except Exception:
+            return {}
+    return {}
+
+def save_raw(data: Dict[str, Any]) -> None:
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with CONFIG_PATH.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+
+def upsert(section: str, values: Dict[str, Any]) -> Dict[str, Any]:
+    cfg = load_raw()
+    sec = cfg.get(section, {}) or {}
+    sec.update({k: v for k, v in values.items() if v is not None})
+    cfg[section] = sec
+    save_raw(cfg)
+    return cfg
+# --- BEGIN: safe IMAP helpers (append) ---
+import os, logging, yaml
+from pathlib import Path
+
+def _read_yaml_dict(_path: str | os.PathLike = "config.yaml") -> dict:
+    p = Path(_path)
+    if not p.exists():
+        return {}
+    with p.open("r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+def get_effective_imap_config(config_path: str | os.PathLike = "config.yaml") -> dict:
+    """
+    Возвращает dict imap-настроек, где пустые ENV не затирают YAML.
+    Приоритет: непустые ENV > YAML.
+    """
+    data = _read_yaml_dict(config_path)
+    imap = (data.get("imap") or {})
+    env_user = os.getenv("IMAP__USER")
+    env_pass = os.getenv("IMAP__PASSWORD")
+
+    def _prefer_env(yaml_val: str | None, env_val: str | None):
+        if env_val is None:
+            return yaml_val
+        if isinstance(env_val, str) and len(env_val.strip()) == 0:
+            # пустую переменную окружения игнорируем
+            return yaml_val
+        return env_val
+
+    eff = {
+        "host": imap.get("host"),
+        "port": imap.get("port"),
+        "user": _prefer_env(imap.get("user"), env_user),
+        "password": _prefer_env(imap.get("password"), env_pass),
+        "mailbox": imap.get("mailbox"),
+        "two_factor": imap.get("two_factor"),
+    }
+    return eff
+
+def get_effective_imap_credentials(config_path: str | os.PathLike = "config.yaml") -> tuple[str | None, str | None]:
+    cfg = get_effective_imap_config(config_path)
+    return cfg.get("user"), cfg.get("password")
+# --- END: safe IMAP helpers (append) ---
+
+def get_effective_system_config(config_path: str | os.PathLike = "config.yaml") -> dict:
+    """
+    Возвращает system-конфиг с приоритетом непустых ENV.
+    ENV CATS__TOKEN переопределяет auth.token только если непустой.
+    Пустые ENV НЕ затирают YAML.
+    """
+    data = _read_yaml_dict(config_path)
+    system = (data.get("system") or {})
+    auth = (system.get("auth") or {})
+
+    # ENV override (только если непусто)
+    env_token = os.getenv("CATS__TOKEN")
+    token = auth.get("token")
+    if env_token is not None and len(env_token.strip()) > 0:
+        token = env_token
+
+    return {
+        "base_url": system.get("base_url"),
+        "connect_url": system.get("connect_url") or system.get("base_url"),
+        "auth": {
+            "type": (auth.get("type") or "none"),
+            "username": auth.get("username"),
+            "password": auth.get("password"),
+            "token": token,
+            "headers": (auth.get("headers") or {}),
+            "cookies": (auth.get("cookies") or {}),
+        },
+    }
+

@@ -1,0 +1,254 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="block">
+  <h2 class="subtitle">Directory</h2>
+  <p>Мэппинг кампаний/групп на правила почты (Yandex + Verifier).</p>
+</div>
+
+<div class="block">
+  <button type="button"
+          class="button is-warning is-small"
+          hx-post="directory/yandex_update"
+          hx-swap="innerHTML">
+    Yandex
+  </button>
+
+  <button type="button"
+          class="button is-primary is-small"
+          onclick="importSelectedVerifiers()">
+    Import verifiers (selected campaigns & groups)
+  </button>
+</div>
+
+<!-- CAMPAIGNS -->
+<h4 class="title is-6">Campaign bindings</h4>
+<table class="table is-striped is-fullwidth">
+  <thead>
+    <tr>
+      <th><input type="checkbox" id="sel_all" onclick="toggleAll(this)"></th>
+      <th>ID</th>
+      <th>Name</th>
+      <th>Yandex name</th>
+      <th>Provider</th>
+      <th>Subject pattern</th>
+      <th>Subject match</th>
+      <th>Filename pattern</th>
+      <th>Filename match</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for camp in campaigns %}
+    {% set v = verifier_map.get(camp.id) or {} %}
+    <tr>
+      <td><input type="checkbox" class="sel_row" value="{{ camp.id }}"></td>
+      <td>{{ camp.id }}</td>
+      <td>{{ camp.name }}</td>
+      <td>
+        <input class="input is-small"
+               type="text"
+               name="yandex_name_{{ camp.id }}"
+               value="{{ yandex_map.get(camp.id) or '' }}"
+               placeholder="например: Pesto2flight_Inlab">
+      </td>
+      <td>
+        <div class="select is-small">
+          <select name="ver_provider_{{ camp.id }}">
+            {% for opt in ['weborama','adserving','adriver','targetads'] %}
+              <option value="{{ opt }}" {% if v.get('provider')==opt %}selected{% endif %}>{{ opt }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </td>
+      <td>
+        <input class="input is-small"
+               type="text"
+               name="ver_name_{{ camp.id }}"
+               value="{{ v.get('verifier_name') or '' }}"
+               placeholder="часть темы письма; напр. innlab_parodontax_sep-nov_2025_ver_">
+      </td>
+      <td>
+        <div class="select is-small">
+          <select name="ver_subj_mode_{{ camp.id }}">
+            {% for m in ['contains','exact','startswith','endswith','regex'] %}
+              <option value="{{ m }}" {% if (v.get('subject_mode') or 'contains')==m %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </td>
+      <td>
+        <input class="input is-small"
+               type="text"
+               name="ver_fname_pat_{{ camp.id }}"
+               value="{{ v.get('filename_pattern') or '' }}"
+               placeholder="часть имени файла; напр. fraud_report_">
+      </td>
+      <td>
+        <div class="select is-small">
+          <select name="ver_fname_mode_{{ camp.id }}">
+            {% for m in ['contains','exact','startswith','endswith','regex'] %}
+              <option value="{{ m }}" {% if (v.get('filename_mode') or 'contains')==m %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </td>
+      <td>
+        <div class="buttons are-small">
+          <button class="button is-link is-light" onclick="saveVerifier({{ camp.id }})">Save</button>
+          <button class="button is-primary is-light" onclick="saveYandexName({{ camp.id }})">Save Yandex</button>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<!-- GROUPS -->
+<h4 class="title is-6 mt-5">Verifier group bindings</h4>
+<table class="table is-striped is-fullwidth">
+  <thead>
+    <tr>
+      <th><input type="checkbox" id="sel_groups_all" onclick="toggleAllGroups(this)"></th>
+      <th>Group ID</th>
+      <th>Group name</th>
+      <th>Provider</th>
+      <th>Subject pattern</th>
+      <th>Subject match</th>
+      <th>Filename pattern</th>
+      <th>Filename match</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for g in groups %}
+    {% set b = group_bindings.get(g.id) or {} %}
+    <tr>
+      <td><input type="checkbox" class="sel_group_row" value="{{ g.id }}"></td>
+      <td>{{ g.id }}</td>
+      <td>{{ g.name }}</td>
+      <td>
+        <div class="select is-small">
+          <select name="grp_provider_{{ g.id }}">
+            {% for opt in ['weborama','adserving','adriver','targetads'] %}
+              <option value="{{ opt }}" {% if b.get('provider')==opt %}selected{% endif %}>{{ opt }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </td>
+      <td>
+        <input class="input is-small"
+               type="text"
+               name="grp_subj_{{ g.id }}"
+               value="{{ b.get('subject_pattern') or '' }}"
+               placeholder="часть темы/шаблон; напр. Richard_OLV">
+      </td>
+      <td>
+        <div class="select is-small">
+          <select name="grp_subj_mode_{{ g.id }}">
+            {% for m in ['contains','exact','startswith','endswith','regex'] %}
+              <option value="{{ m }}" {% if (b.get('subject_mode') or 'contains')==m %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </td>
+      <td>
+        <input class="input is-small"
+               type="text"
+               name="grp_fname_pat_{{ g.id }}"
+               value="{{ b.get('filename_pattern') or '' }}"
+               placeholder="часть имени файла; напр. fraud_report_">
+      </td>
+      <td>
+        <div class="select is-small">
+          <select name="grp_fname_mode_{{ g.id }}">
+            {% for m in ['contains','exact','startswith','endswith','regex'] %}
+              <option value="{{ m }}" {% if (b.get('filename_mode') or 'contains')==m %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </td>
+      <td>
+        <button class="button is-link is-small is-light" onclick="saveVerifierGroup({{ g.id }})">Save</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<script>
+function saveYandexName(campaignId) {
+  const field = document.querySelector('input[name="yandex_name_' + campaignId + '"]');
+  fetch('/directory/yandex/update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: campaignId, yandex_name: field.value })
+  })
+  .then(resp => resp.ok ? resp.json() : resp.text().then(t => { throw new Error(t); }))
+  .then(_ => alert('Yandex name сохранён'))
+  .catch(err => alert('Ошибка: ' + err.message));
+}
+
+function saveVerifier(campaignId) {
+  const payload = {
+    id: campaignId,
+    provider: document.querySelector('select[name="ver_provider_' + campaignId + '"]').value,
+    verifier_name: document.querySelector('input[name="ver_name_' + campaignId + '"]').value,
+    subject_mode: document.querySelector('select[name="ver_subj_mode_' + campaignId + '"]').value,
+    filename_pattern: document.querySelector('input[name="ver_fname_pat_' + campaignId + '"]').value,
+    filename_mode: document.querySelector('select[name="ver_fname_mode_' + campaignId + '"]').value
+  };
+  fetch('/directory/verifier/update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  .then(resp => resp.ok ? resp.json() : resp.text().then(t => { throw new Error(t); }))
+  .then(_ => alert('Verifier (campaign) сохранён'))
+  .catch(err => alert('Ошибка: ' + err.message));
+}
+
+function saveVerifierGroup(groupId) {
+  const payload = {
+    group_id: groupId,
+    provider: document.querySelector('select[name="grp_provider_' + groupId + '"]').value,
+    subject_pattern: document.querySelector('input[name="grp_subj_' + groupId + '"]').value,
+    subject_mode: document.querySelector('select[name="grp_subj_mode_' + groupId + '"]').value,
+    filename_pattern: document.querySelector('input[name="grp_fname_pat_' + groupId + '"]').value,
+    filename_mode: document.querySelector('select[name="grp_fname_mode_' + groupId + '"]').value
+  };
+  fetch('/directory/verifier/group/update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  .then(resp => resp.ok ? resp.json() : resp.text().then(t => { throw new Error(t); }))
+  .then(_ => alert('Verifier (group) сохранён'))
+  .catch(err => alert('Ошибка: ' + err.message));
+}
+
+function toggleAll(master) {
+  document.querySelectorAll('.sel_row').forEach(ch => ch.checked = master.checked);
+}
+function toggleAllGroups(master) {
+  document.querySelectorAll('.sel_group_row').forEach(ch => ch.checked = master.checked);
+}
+
+function importSelectedVerifiers() {
+  const ids = Array.from(document.querySelectorAll('.sel_row:checked')).map(ch => parseInt(ch.value, 10));
+  const group_ids = Array.from(document.querySelectorAll('.sel_group_row:checked')).map(ch => parseInt(ch.value, 10));
+  fetch('/directory/verifier/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: ids, group_ids: group_ids })
+  })
+  .then(resp => resp.text())
+  .then(html => {
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    document.body.appendChild(div);
+    setTimeout(() => div.remove(), 10000);
+  })
+  .catch(err => alert('Ошибка: ' + err.message));
+}
+</script>
+{% endblock %}

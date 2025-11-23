@@ -1,0 +1,229 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<style>
+  /* Берём ту же идею бокового меню, что и на Campaigns :contentReference[oaicite:0]{index=0} */
+  :root{
+    --nav-min: 180px;
+    --navW: max(10vw, var(--nav-min));
+    --topbar-h: 72px;
+  }
+
+  .cmpx-nav{
+    position: fixed;
+    left:0; top:0; bottom:0;
+    width: var(--navW);
+    background:#303030; color:#fff;
+    padding: calc(var(--topbar-h) + 8px) .5rem .75rem;
+    z-index: 20;
+  }
+  .cmpx-nav h3{
+    color:#fff; font-size:.85rem; text-transform:uppercase;
+    opacity:.8; margin:.25rem .75rem;
+  }
+  .cmpx-nav a{
+    color:#fff; display:block;
+    padding:.5rem .75rem; border-radius:4px;
+    text-decoration:none; font-weight:500; margin-bottom:.25rem;
+  }
+  .cmpx-nav a.is-active{
+    color:#00cccc; background:rgba(255,255,255,.08);
+  }
+
+  .cmpx-main{
+    margin-left: var(--navW);
+    padding: 10px;
+    box-sizing: border-box;
+  }
+</style>
+
+<div class="cmpx-layout">
+  <!-- Левое меню админки -->
+  <aside class="cmpx-nav">
+    <h3>Admin</h3>
+    <a href="/logs" class="{% if request.url.path.startswith('/logs') %}is-active{% endif %}">Logs</a>
+    <a href="/settings" class="{% if request.url.path.startswith('/settings') %}is-active{% endif %}">Settings</a>
+    <a href="/dataflow" class="{% if request.url.path.startswith('/dataflow') %}is-active{% endif %}">Data Flow</a>
+    <a href="/admin/users" class="{% if request.url.path.startswith('/admin/users') %}is-active{% endif %}">Users & Access</a>
+  </aside>
+
+  <main class="cmpx-main">
+    <section class="section">
+      <h1 class="title is-4">Пользователи и доступ</h1>
+
+      <div class="columns">
+        <!-- Добавление пользователя -->
+        <div class="column is-4">
+          <div class="box">
+            <h2 class="subtitle is-6 has-text-weight-semibold">Добавить пользователя</h2>
+
+            <form method="post" action="/admin/users">
+              <div class="field">
+                <label class="label is-small">Логин</label>
+                <div class="control">
+                  <input class="input is-small" type="text" name="login" required>
+                </div>
+              </div>
+
+              <div class="field">
+                <label class="label is-small">Пароль</label>
+                <div class="control">
+                  <input class="input is-small" type="text" name="password" required>
+                </div>
+              </div>
+
+              <div class="field">
+                <label class="label is-small">Роль</label>
+                <div class="control">
+                  <div class="select is-small is-fullwidth">
+                    <select name="role_id" required>
+                      {% for role in roles %}
+                        <option value="{{ role.id }}">
+                          {{ role.name }} ({{ role.code }})
+                        </option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="field mt-3">
+                <div class="control">
+                  <button class="button is-link is-small is-fullwidth" type="submit">
+                    Создать
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Список пользователей -->
+        <div class="column">
+          <div class="box">
+            <h2 class="subtitle is-6 has-text-weight-semibold">Список пользователей</h2>
+
+            <table class="table is-fullwidth is-striped is-narrow">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Логин</th>
+                  <th>Пароль (plain)</th>
+                  <th>Роль</th>
+                  <th>Активен</th>
+                  <th>Создан</th>
+                  <th>Смена пароля</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for user in users %}
+                <tr>
+                  <td>{{ user.id }}</td>
+                  <td>{{ user.login }}</td>
+                  <td>
+                    <span class="has-text-grey is-size-7">
+                      {{ user.password_plain or "—" }}
+                    </span>
+                  </td>
+                  <td>
+                    <form method="post" action="/admin/users/{{ user.id }}/role">
+                      <div class="select is-small">
+                        <select name="role_id" onchange="this.form.submit()">
+                          {% for role in roles %}
+                            <option value="{{ role.id }}"
+                              {% if role.id == user.role_id %}selected{% endif %}>
+                              {{ role.code }}
+                            </option>
+                          {% endfor %}
+                        </select>
+                      </div>
+                    </form>
+                  </td>
+                  <td>
+                    <form method="post" action="/admin/users/{{ user.id }}/toggle-active">
+                      <button class="button is-small {{ 'is-success' if user.is_active else '' }}">
+                        {{ 'ON' if user.is_active else 'OFF' }}
+                      </button>
+                    </form>
+                  </td>
+                  <td class="is-size-7">
+                    {{ user.created_at or "—" }}
+                  </td>
+                  <td>
+                    <form method="post" action="/admin/users/{{ user.id }}/password" class="field has-addons mb-1">
+                      <div class="control is-expanded">
+                        <input class="input is-small" type="text" name="password" placeholder="Новый пароль">
+                      </div>
+                      <div class="control">
+                        <button class="button is-small">Set</button>
+                      </div>
+                    </form>
+                    <span class="has-text-grey is-size-7">Текущий: {{ user.password_plain or "—" }}</span>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <hr>
+
+      <!-- Матрица прав по модулям -->
+      <h2 class="title is-5">Права доступа по модулям</h2>
+      <div class="box">
+        <table class="table is-narrow is-fullwidth is-striped">
+          <thead>
+            <tr>
+              <th>Роль \\ Модуль</th>
+              {% for module in modules %}
+                <th class="has-text-centered">
+                  <span class="is-size-7 has-text-weight-semibold">{{ module.code }}</span><br>
+                  <span class="is-size-7 has-text-grey">{{ module.name }}</span>
+                </th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for role in roles %}
+              <tr>
+                <th>
+                  {{ role.name }}<br>
+                  <span class="is-size-7 has-text-grey">{{ role.code }}</span>
+                </th>
+                {% for module in modules %}
+                  {% set perm = (perms.get(role.id) or {}).get(module.code) %}
+                  <td class="has-text-centered is-size-7">
+                    <label class="checkbox">
+                      <input type="checkbox"
+                             {% if perm and perm.can_view %}checked{% endif %}
+                             hx-post="/admin/permissions/{{ role.id }}/{{ module.code }}"
+                             hx-vals='{"field": "view"}'
+                             hx-swap="none">
+                      V
+                    </label>
+                    <label class="checkbox ml-1">
+                      <input type="checkbox"
+                             {% if perm and perm.can_edit %}checked{% endif %}
+                             hx-post="/admin/permissions/{{ role.id }}/{{ module.code }}"
+                             hx-vals='{"field": "edit"}'
+                             hx-swap="none">
+                      E
+                    </label>
+                  </td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        <p class="is-size-7 has-text-grey">
+          V = просмотр, E = редактирование. Админ по умолчанию имеет доступ ко всем модулям.
+        </p>
+      </div>
+    </section>
+  </main>
+</div>
+
+{% endblock %}

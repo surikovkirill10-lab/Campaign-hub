@@ -1,0 +1,25 @@
+import imaplib, yaml, email
+from email.header import decode_header, make_header
+def dec(s):
+    if not s: return ""
+    try: return str(make_header(decode_header(s)))
+    except: return s
+cfg  = yaml.safe_load(open("config.yaml","r",encoding="utf-8"))
+imap = cfg["imap"]
+M    = imaplib.IMAP4_SSL(imap.get("host","imap.yandex.com"), int(imap.get("port",993)))
+M.login(imap["user"], imap["password"]); M.select("INBOX", readonly=True)
+names = [c["yandex_name"] for c in (cfg.get("yandex_campaigns") or []) if "yandex_name" in c]
+for y in names:
+    typ, data = M.search(None, 'FROM', 'devnull@yandex.ru', 'SUBJECT', f'"{y}"')
+    uids = data[0].split() if (typ=='OK' and data and data[0]) else []
+    print(f"[{y}] matched: {len(uids)}")
+    for uid in uids[:2]:
+        t, md = M.fetch(uid, '(RFC822)')
+        if t!='OK': continue
+        msg  = email.message_from_bytes(md[0][1])
+        print("  subj:", dec(msg.get('Subject','')))
+        for part in msg.walk():
+            if part.get_content_maintype()=='multipart': continue
+            fn = dec(part.get_filename())
+            if fn: print("    att:", fn)
+M.logout()

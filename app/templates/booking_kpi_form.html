@@ -1,0 +1,50 @@
+<div class="box">
+  <h4 class="title is-5">KPI для: {{ b.name }}</h4>
+  <form hx-post="/bookings/{{ b.id }}/save_kpi" hx-target="#row-{{ b.id }}" hx-swap="outerHTML">
+    <div class="columns is-multiline">
+      <div class="column is-3">
+        <label class="label is-small">Impressions</label>
+        <input class="input is-small" type="number" name="kpi_impressions" value="{{ k.kpi_impressions if k else '' }}">
+      </div>
+      <div class="column is-3">
+        <label class="label is-small">Clicks</label>
+        <input class="input is-small" type="number" name="kpi_clicks" value="{{ k.kpi_clicks if k else '' }}">
+      </div>
+      <div class="column is-3">
+        <label class="label is-small">Reach (uniques)</label>
+        <input class="input is-small" type="number" name="kpi_uniques" value="{{ k.kpi_uniques if k else '' }}">
+      </div>
+      <div class="column is-3">
+        <label class="label is-small">CTR (доля, 0..1)</label>
+        <input class="input is-small" type="text" name="kpi_ctr" value="{{ k.kpi_ctr if k else '' }}">
+      </div>
+      <div class="column is-3">
+        <label class="label is-small">Частота (freq)</label>
+        <input class="input is-small" type="text" name="kpi_freq" value="{{ k.kpi_freq if k else '' }}">
+      </div>
+      <div class="column is-3">
+        <label class="label is-small">Конверсии</label>
+        <input class="input is-small" type="number" name="kpi_conversions" value="{{ k.kpi_conversions if k else '' }}">
+      </div>
+      <div class="column is-3">
+        <label class="label is-small">Spend (≤ лучше)</label>
+        <input class="input is-small" type="text" name="kpi_spend" value="{{ k.kpi_spend if k else '' }}">
+      </div>
+      <div class="column is-3">
+        <label class="label is-small">CPM (≤ лучше)</label>
+        <input class="input is-small" type="text" name="kpi_cpm" value="{{ k.kpi_cpm if k else '' }}">
+      </div>
+      <div class="column is-3">
+        <label class="label is-small">CPC (≤ лучше)</label>
+        <input class="input is-small" type="text" name="kpi_cpc" value="{{ k.kpi_cpc if k else '' }}">
+      </div>
+      <div class="column is-3">
+        <label class="label is-small">CPA (≤ лучше)</label>
+        <input class="input is-small" type="text" name="kpi_cpa" value="{{ k.kpi_cpa if k else '' }}">
+      </div>
+    </div>
+    <div class="mt-2">
+      <button class="button is-primary is-small" type="submit">Сохранить KPI</button>
+    </div>
+  </form>
+</div>

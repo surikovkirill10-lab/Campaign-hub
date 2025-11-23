@@ -1,0 +1,20 @@
+:root{
+  --nav-bg:#111111;
+  --nav-bg-hover:#1a1a1a;
+  --nav-text:#ffffff;
+  --nav-text-hover:#dddddd;
+  --nav-active-bg:#00cccc;
+  --nav-active-text:#ffffff;
+}
+.topbar{position:sticky;top:0;left:0;right:0;z-index:1000;background:var(--nav-bg);border-bottom:1px solid #222;}
+.topbar .wrap{max-width:1180px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:18px;}
+.topbar .brand{display:flex;align-items:center;gap:10px;text-decoration:none;}
+.topbar .brand img{height:28px;width:auto;display:block;}
+.topbar .brand span{color:var(--nav-text);font-weight:700;letter-spacing:.2px}
+.topnav{display:flex;gap:6px;margin-left:auto;}
+.topnav a{color:var(--nav-text);text-decoration:none;padding:8px 12px;border-radius:8px;font-weight:500;transition:color .15s,background-color .15s,transform .04s;}
+.topnav a:hover{color:var(--nav-text-hover);background:var(--nav-bg-hover);}
+.topnav a:active{transform:translateY(1px)}
+.topnav a.active{background:var(--nav-active-bg);color:var(--nav-active-text);font-weight:700;}
+.page-shell{padding-top:12px;}
+@media (max-width:640px){.topbar .wrap{padding:10px 12px}.topnav a{padding:8px 10px}}

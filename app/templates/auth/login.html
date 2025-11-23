@@ -1,0 +1,54 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<section class="hero is-fullheight is-light">
+  <!-- Чёрная шапка -->
+  <div class="hero-head has-background-black">
+    <div class="container py-3">
+      <span class="has-text-white has-text-weight-semibold">
+        Campaign Hub
+      </span>
+    </div>
+  </div>
+
+  <!-- Форма логина в боксе -->
+  <div class="hero-body">
+    <div class="container">
+      <div class="columns is-centered">
+        <div class="column is-4-desktop is-6-tablet">
+          <div class="box" style="border-radius: 16px;">
+            <form method="post" action="/auth/login">
+              <div class="field">
+                <label class="label is-small">Логин</label>
+                <div class="control">
+                  <input class="input" type="text" name="login" required autofocus>
+                </div>
+              </div>
+
+              <div class="field">
+                <label class="label is-small">Пароль</label>
+                <div class="control">
+                  <input class="input" type="password" name="password" required>
+                </div>
+              </div>
+
+              {% if error %}
+                <p class="help is-danger">{{ error }}</p>
+              {% endif %}
+
+              <div class="field mt-4">
+                <div class="control">
+                  <button class="button is-dark is-fullwidth" type="submit">
+                    Войти
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div> <!-- box -->
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

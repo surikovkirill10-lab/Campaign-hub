@@ -1,0 +1,7 @@
+{% if error %}
+  <article class="message is-danger"><div class="message-body">IMAP error: {{ error }}</div></article>
+{% elif folders and folders|length > 0 %}
+  <ul>{% for f in folders %}<li>{{ f }}</li>{% endfor %}</ul>
+{% else %}
+  <p>Folders not found or IMAP credentials not set.</p>
+{% endif %}

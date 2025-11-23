@@ -1,0 +1,299 @@
+# app/services/cats_export.py
+from __future__ import annotations
+import os, io, re, csv, json, time, logging, datetime as dt
+from pathlib import Path
+from typing import Dict, Any, List, Tuple, Optional
+import requests
+import pandas as pd
+
+from app.services.config_store import get_effective_system_config
+from app.services.cats_front import cats_front_ping  # переиспользуем авторизацию (cookies)
+
+log = logging.getLogger("app")
+def _decode_rfc5987_filename(cdisp: str) -> str | None:
+    m = re.search(r"filename\*\s*=\s*([^']*)''([^;]+)", cdisp, flags=re.IGNORECASE)
+    if not m:
+        return None
+    enc = (m.group(1) or 'UTF-8').upper()
+    try:
+        from urllib.parse import unquote
+        raw = unquote(m.group(2))
+        return raw.encode('latin-1', errors='ignore').decode(enc, errors='ignore') if enc != 'UTF-8' else raw
+    except Exception:
+        return None
+
+def _fix_legacy_filename(cdisp: str, fallback: str | None) -> str | None:
+    fn = _decode_rfc5987_filename(cdisp) if cdisp else None
+    if fn:
+        return fn
+    if cdisp:
+        m = re.search(r'filename\s*=\s*"([^"]+)"', cdisp, flags=re.IGNORECASE)
+        if m:
+            raw = m.group(1)
+            try:
+                return raw.encode('latin-1', errors='ignore').decode('utf-8', errors='ignore')
+            except Exception:
+                return raw
+    return fallback
+
+def _sanitize_name(name: str) -> str:
+    name = re.sub(r'[\\/:*?"<>|]+', '_', (name or '')).strip()
+    return name or 'cats_export'
+DATA_DIR = Path("data") / "cats"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+def _build_download_conf() -> Dict[str, Any]:
+    sys = get_effective_system_config("config.yaml")
+    cats = (sys.get("cats") or {})
+    download = (cats.get("download") or {})
+    # дефолты
+    return {
+        "url_template": download.get("url_template") or "https://catsnetwork.ru/iface/campaigns/stat/uniques/{id}?&export=xlsx",
+        "method": (download.get("method") or "GET").upper(),
+        "format": (download.get("format") or "xlsx").lower(),
+        "encoding": download.get("encoding") or "cp1251",
+        "delimiter": download.get("delimiter") or ";",
+        "filename_field": download.get("filename_field") or "Content-Disposition",
+        "column_map": download.get("column_map") or {},
+    }
+
+def _ensure_session() -> requests.Session:
+    """
+    Возвращает авторизованную сессию requests.Session.
+    Берём из cats_front_ping ту же процедуру логина (через POST к форме).
+    """
+    # cats_front_ping уже логинит и проходит success_check
+    res = cats_front_ping(timeout=20.0, verbose=False)
+    if not res.get("ok"):
+        raise RuntimeError(f"Cats login failed: {res.get('error') or 'unknown'}")
+    # cats_front_ping внутри использует локальную Session, но не отдает её.
+    # Здесь открываем новую сессию и логинимся повторно максимально быстро.
+    # Извлекаем логин-параметры из system.auth.form:
+    sys = get_effective_system_config("config.yaml")
+    auth = sys.get("auth") or {}
+    form = auth.get("form") or {}
+    login_url   = form.get("login_url")
+    uname_field = form.get("username_field") or "username"
+    pwd_field   = form.get("password_field") or "password"
+    submit_name = form.get("submit_name")
+    extra_fields= form.get("extra_fields") or {}
+    user = auth.get("username") or ""
+    pwd  = auth.get("password") or ""
+    if not (login_url and user and pwd):
+        raise RuntimeError("Missing login_url/username/password in config (auth.form)")
+
+    s = requests.Session()
+    # 1) GET логин-страницы (на случай hidden полей)
+    try:
+        s.get(login_url, timeout=15)
+    except requests.RequestException:
+        pass
+    payload = {uname_field: user, pwd_field: pwd}
+    if submit_name:
+        payload[submit_name] = submit_name
+    if isinstance(extra_fields, dict) and extra_fields:
+        payload.update(extra_fields)
+    # 2) POST
+    r = s.post(login_url, data=payload, timeout=20, allow_redirects=True)
+    r.raise_for_status()
+    if "/login" in str(r.url).lower():
+        log.warning("Cats session still on login page: %s", r.url)
+    return s
+
+def download_stat_file_by_id(stat_id: str) -> Tuple[Path, bytes, Dict[str, Any]]:
+    """
+    Скачивает файл экспорта по ID и сохраняет RAW.
+    Возвращает (путь_сохранения, байты, мета).
+    """
+    conf = _build_download_conf()
+    url = conf["url_template"].format(id=stat_id)
+    method = conf["method"]
+
+    s = _ensure_session()
+    log.info("Cats download: %s %s", method, url)
+    resp = s.post(url, timeout=60) if method == "POST" else s.get(url, timeout=60)
+    resp.raise_for_status()
+
+    content = resp.content
+    ctype = resp.headers.get("Content-Type", "")
+    cdisp = resp.headers.get("Content-Disposition", "")
+
+    # Определим имя файла
+    filename: Optional[str] = None
+    if cdisp:
+        filename = _fix_legacy_filename(cdisp, None)
+    if not filename:
+        ext = ".csv" if conf["format"] == "csv" else ".xlsx"
+        filename = f"cats_export_{stat_id}{ext}"
+    filename = _sanitize_name(filename)
+
+    # Сохраняем RAW
+    ts = dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    out_dir = DATA_DIR / stat_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{ts}_{filename}"
+    out_path.write_bytes(content)
+
+    meta = {"content_type": ctype, "content_disposition": cdisp, "path": str(out_path)}
+    return out_path, content, meta
+
+def parse_stat_bytes(content: bytes, fmt: str, encoding: str, delimiter: str) -> pd.DataFrame:
+    """
+    Парсит байты CSV/XLSX в DataFrame с автообнаружением заголовков.
+    """
+    if fmt == "xlsx":
+        bio = io.BytesIO(content)
+        df = pd.read_excel(bio)
+    else:
+        text = content.decode(encoding, errors="replace")
+        df = pd.read_csv(io.StringIO(text), delimiter=delimiter)
+    # нормализуем заголовки
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+def normalize_columns(df: pd.DataFrame, column_map: Dict[str, List[str]]) -> pd.DataFrame:
+    """
+    Приводим к согласованным именам (date, campaign_id, impressions, clicks, uniques, bounce_rate...)
+    column_map: ключ-это целевое имя, значение-список возможных заголовков источника.
+    """
+    rename = {}
+    low = {c.lower(): c for c in df.columns}
+    for target, variants in column_map.items():
+        for v in variants:
+            c = low.get(v.lower())
+            if c:
+                rename[c] = target
+                break
+    if rename:
+        df = df.rename(columns=rename)
+    return df
+
+def ingest_stat(df: pd.DataFrame, stat_id: str) -> Dict[str, Any]:
+    """
+    Базовая инжест-реализация: сохраняем нормализованный CSV рядом с RAW.
+    (Хук для БД можно добавить позже — под твою схему.)
+    """
+    out_dir = DATA_DIR / stat_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    clean_path = out_dir / "latest_normalized.csv"
+    df.to_csv(clean_path, index=False)
+    return {"normalized_path": str(clean_path), "rows": int(df.shape[0]), "cols": list(df.columns)}
+
+def _coerce_number(x):
+    if pd.isna(x): return None
+    if isinstance(x, (int, float)): return x
+    s = str(x).strip().replace(' ', '').replace(',', '.').replace('%','')
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+def _normalize_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    # --- Базовая переименовка русских колонок в канонические ---
+    rename = {}
+    if "Переходы" in df.columns: rename["Переходы"] = "clicks"
+    if "Показы"   in df.columns: rename["Показы"]   = "impressions"
+    if "Охват"    in df.columns: rename["Охват"]    = "uniques"
+    if "День"     in df.columns: rename["День"]     = "date"
+    df = df.rename(columns=rename)
+
+    # --- Дата в ISO (YYYY-MM-DD) ---
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce").dt.date
+
+    # --- Приведение чисел/процентов ---
+    def _coerce_number(x):
+        if pd.isna(x):
+            return None
+        if isinstance(x, (int, float)):
+            return float(x)
+        s = str(x).strip().replace(" ", "").replace(",", ".").replace("%", "")
+        try:
+            return float(s)
+        except Exception:
+            return None
+
+    # --- CTR/VTR: и в процентах, и как доля ---
+    for src, base in (("CTR", "ctr"), ("VTR", "vtr")):
+        if src in df.columns:
+            vals = df[src].apply(_coerce_number)
+            df[f"{base}_percent"] = vals
+            df[f"{base}_ratio"]   = vals.apply(lambda v: (v/100.0) if v is not None else None)
+
+    # --- Частота = Показы / Охват ---
+    if "impressions" in df.columns and "uniques" in df.columns:
+        imp = df["impressions"].apply(_coerce_number)
+        uni = df["uniques"].apply(_coerce_number)
+        df["freq"] = [round(i/u, 2) if (u and u > 0 and i is not None) else None for i, u in zip(imp, uni)]
+
+    return df        def _fix_date(s):
+            try:
+                return pd.to_datetime(s, dayfirst=True, errors="coerce").dt.date
+            except Exception:
+                return pd.to_datetime(["1970-01-01"]).date
+        df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce").dt.date
+
+    # --- Числа-помощники ---
+    def _coerce_number(x):
+        if pd.isna(x): return None
+        if isinstance(x, (int, float)): return float(x)
+        s = str(x).strip().replace(" ", "").replace(",", ".").replace("%", "")
+        try:
+            return float(s)
+        except Exception:
+            return None
+
+    # --- CTR/VTR: и percent, и ratio ---
+    for src, base in (("CTR", "ctr"), ("VTR", "vtr")):
+        if src in df.columns:
+            vals = df[src].apply(_coerce_number)
+            df[f"{base}_percent"] = vals
+            df[f"{base}_ratio"]   = vals.apply(lambda v: (v/100.0) if v is not None else None)
+
+    # --- Частота = Показы / Охват ---
+    # стараемся брать наши канонические имена; если их нет, создадим из исходных
+    if "impressions" not in df.columns and "Показы" in rename:
+        df["impressions"] = df[rename["Показы"]]
+    if "uniques" not in df.columns and "Охват" in rename:
+        df["uniques"] = df[rename["Охват"]]
+
+    if "impressions" in df.columns and "uniques" in df.columns:
+        imp = df["impressions"].apply(_coerce_number)
+        uni = df["uniques"].apply(_coerce_number)
+        df["freq"] = [round((i/u), 2) if (u and u>0 and i is not None) else None for i,u in zip(imp, uni)]
+
+    # Финальная подрезка колонок не делаем: сохраняем всё + наши новые поля
+    return dffor col, base in (('CTR','ctr'), ('VTR','vtr')):
+        if col in df.columns:
+            vals = df[col].apply(_coerce_number)
+            df[f'{base}_percent'] = vals
+            df[f'{base}_ratio'] = vals.apply(lambda v: (v/100.0) if (v is not None) else None)
+    if 'День' in df.columns:
+        def _fix_date(s):
+            try:
+                return pd.to_datetime(s, dayfirst=True, errors='coerce').date()
+            except Exception:
+                return None
+        df['date'] = df['День'].apply(_fix_date)
+    rename = {}
+    if 'Переходы' in df.columns: rename['Переходы'] = 'clicks'
+    if 'Показы' in df.columns:   rename['Показы']   = 'impressions'
+    if 'Охват' in df.columns:    rename['Охват']    = 'uniques'
+    return df.rename(columns=rename)
+
+def export_and_ingest(stat_id: str) -> Dict[str, Any]:
+    conf = _build_download_conf()
+    path, content, meta = download_stat_file_by_id(stat_id)
+    df = parse_stat_bytes(content, fmt=conf["format"], encoding=conf["encoding"], delimiter=conf["delimiter"])
+    df = normalize_columns(df, conf['column_map'])
+    df = _normalize_metrics(df)
+    ing = ingest_stat(df, stat_id)
+    return {"ok": True, "raw_path": str(path), "meta": meta, "ingest": ing}
+
+
+
+
+
+
+
+

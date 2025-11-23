@@ -1,0 +1,28 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="block">
+    <h2 class="subtitle">Directory</h2>
+    <p>
+        The directory maintains the mapping between your internal campaign IDs and the
+        mail rules used to fetch Yandex Metrica reports.  Each campaign may share
+        a mail rule if multiple campaigns arrive in the same inbox.
+    </p>
+</div>
+<table class="table is-striped is-fullwidth">
+    <thead>
+        <tr>
+            <th>ID</th><th>Name</th><th>Mail Rule</th><th>Notes</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for camp in campaigns %}
+        <tr>
+            <td>{{ camp.id }}</td>
+            <td>{{ camp.name }}</td>
+            <td>{{ camp.mail_rule_id or '—' }}</td>
+            <td>{{ camp.notes or '' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

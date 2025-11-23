@@ -1,0 +1,209 @@
+{% extends "layout.html" %}
+{% block content %}
+<section class="section">
+  <div class="container">
+    <h1 class="title">Data Flow Editor</h1>
+    <p class="subtitle">Источники → Метрики → Таблицы БД</p>
+
+    <!-- Пути источников -->
+    <div class="box">
+      <h2 class="title is-5">Пути источников и БД</h2>
+      <div class="columns">
+        <div class="column">
+          <label class="label">Cats CSV template</label>
+          <input id="cats_path" class="input" placeholder="data/cats/{campaign_id}/latest_normalized.csv">
+        </div>
+        <div class="column">
+          <label class="label">Yandex DB path</label>
+          <input id="ydb_path" class="input" placeholder="yandex_metrics.db">
+        </div>
+        <div class="column">
+          <label class="label">Main DB</label>
+          <input id="cdb_path" class="input" placeholder="campaign_hub.db">
+        </div>
+      </div>
+      <label class="checkbox">
+        <input id="show_raw" type="checkbox">
+        Показывать RAW‑слой (raw_system_daily / raw_metrica_daily)
+      </label>
+    </div>
+
+    <!-- Таблица метрик -->
+    <div class="box">
+      <h2 class="title is-5">Маппинг метрик</h2>
+      <div class="table-container">
+        <table class="table is-fullwidth is-striped is-narrow" id="metricsTable">
+          <thead>
+            <tr>
+              <th>Метрика</th>
+              <th>Источник</th>
+              <th>Поле/Формула</th>
+              <th>Описание</th>
+              <th style="width:64px;"></th>
+            </tr>
+          </thead>
+          <tbody id="metricsBody"></tbody>
+        </table>
+      </div>
+      <button class="button is-small" id="addRowBtn">+ Добавить метрику</button>
+    </div>
+
+    <!-- Диаграмма -->
+    <div class="box">
+      <h2 class="title is-5">Диаграмма потоков</h2>
+      <div class="buttons">
+        <button class="button is-link" id="renderBtn">Перерисовать</button>
+        <button class="button is-success" id="saveBtn">Сохранить конфиг</button>
+      </div>
+      <div id="diagram" class="mt-3"></div>
+      <p class="help">Визуализация генерируется локально из конфигурации.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Подключаем Mermaid -->
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
+
+  const cfg = {{ cfg_json | safe }};
+  const $ = (s) => document.querySelector(s);
+  const metricsBody = $("#metricsBody");
+
+  // Инициализация полей путей
+  $("#cats_path").value = cfg.paths.cats_csv_template || "";
+  $("#ydb_path").value  = cfg.paths.yandex_db_path || "";
+  $("#cdb_path").value  = cfg.paths.campaign_db_path || "";
+  $("#show_raw").checked = !!cfg.paths.show_raw_layer;
+
+  // Опции источников
+  const SOURCE_OPTS = [
+    ["cats","Cats"],
+    ["yandex","Yandex Update"],
+    ["verifier","Verifier (план)"],
+    ["derived","Derived"]
+  ];
+
+  function rowTemplate(key, val){
+    const src = val.source || "cats";
+    const field = val.field || val.formula || "";
+    const desc = val.desc || "";
+    return `
+      <tr data-key="${key}">
+        <td><code>${key}</code></td>
+        <td>
+          <div class="select is-small">
+            <select class="src">
+              ${SOURCE_OPTS.map(([v,l]) => `<option value="${v}" ${v===src?'selected':''}>${l}</option>`).join('')}
+            </select>
+          </div>
+        </td>
+        <td><input class="input is-small fld" value="${field}" placeholder="field или formula"></td>
+        <td><input class="input is-small dsc" value="${desc}" placeholder="описание"></td>
+        <td><button class="button is-small is-light del">✕</button></td>
+      </tr>`;
+  }
+
+  function rebuildTable(){
+    metricsBody.innerHTML = "";
+    Object.entries(cfg.metrics).forEach(([k,v])=>{
+      metricsBody.insertAdjacentHTML("beforeend", rowTemplate(k, v));
+    });
+  }
+
+  function addMetric(){
+    const key = prompt("Имя метрики (латиницей, без пробелов):");
+    if(!key) return;
+    if(cfg.metrics[key]){ alert("Такая метрика уже есть"); return; }
+    cfg.metrics[key] = {source:"derived", formula:"", desc:""};
+    rebuildTable();
+  }
+
+  function collectState(){
+    // пути
+    cfg.paths.cats_csv_template = $("#cats_path").value.trim();
+    cfg.paths.yandex_db_path    = $("#ydb_path").value.trim();
+    cfg.paths.campaign_db_path  = $("#cdb_path").value.trim();
+    cfg.paths.show_raw_layer    = $("#show_raw").checked;
+    // метрики
+    [...metricsBody.querySelectorAll("tr")].forEach(tr=>{
+      const key = tr.dataset.key;
+      const src = tr.querySelector(".src").value;
+      const fld = tr.querySelector(".fld").value.trim();
+      const dsc = tr.querySelector(".dsc").value.trim();
+      cfg.metrics[key] = (src==="derived")
+        ? {source: src, formula: fld, desc: dsc}
+        : {source: src, field: fld, desc: dsc};
+    });
+    return cfg;
+  }
+
+  async function saveConfig(){
+    collectState();
+    const r = await fetch("/data-flow/save", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(cfg)});
+    const j = await r.json();
+    if(j.ok){ alert("Сохранено"); } else { alert("Ошибка: " + (j.error||"unknown")); }
+  }
+
+  function buildMermaid(cfg){
+    const cats = cfg.paths.cats_csv_template || "data/cats/{cid}/latest_normalized.csv";
+    const ydb  = cfg.paths.yandex_db_path || "yandex_metrics.db";
+    const cdb  = cfg.paths.campaign_db_path || "campaign_hub.db";
+    const showRaw = !!cfg.paths.show_raw_layer;
+    let g = `graph LR\n`;
+    g += `  CATS["Cats CSV<br/><small>${cats}</small>"]\n`;
+    g += `  YAN["Yandex DB<br/><small>${ydb}</small>"]\n`;
+    g += `  CDB["Main DB<br/><small>${cdb}</small>"]\n`;
+    g += `  FACT["fact_daily"]\n`;
+    if(showRaw){
+      g += `  RAWS["raw_system_daily"]\n`;
+      g += `  RAWM["raw_metrica_daily"]\n`;
+      g += `  CATS-->RAWS-->FACT\n`;
+      g += `  YAN-->RAWM-->FACT\n`;
+      g += `  FACT-->CDB\n`;
+    } else {
+      g += `  CATS-->FACT\n`;
+      g += `  YAN-->FACT\n`;
+      g += `  FACT-->CDB\n`;
+    }
+    g += `  VER["Verifier<br/><small>будущий модуль</small>"]\n`;
+    Object.entries(cfg.metrics).forEach(([k,v])=>{
+      const label = v.desc ? `${k}\\n(${v.desc})` : k;
+      if(v.source==="cats"){
+        g += `  CATS-- "${label}" -->FACT\n`;
+      } else if(v.source==="yandex"){
+        g += `  YAN-- "${label}" -->FACT\n`;
+      } else if(v.source==="verifier"){
+        g += `  VER-- "${label}" -->FACT\n`;
+      } else if(v.source==="derived"){
+        g += `  FACT-. "${label} = ${v.formula||''}" .->FACT\n`;
+      }
+    });
+    return g;
+  }
+
+  async function render(){
+    const current = collectState();
+    const def = buildMermaid(current);
+    const { svg } = await mermaid.render("flowSvg", def);
+    document.querySelector("#diagram").innerHTML = svg;
+  }
+
+  $("#addRowBtn").addEventListener("click", addMetric);
+  $("#saveBtn").addEventListener("click", saveConfig);
+  $("#renderBtn").addEventListener("click", render);
+  metricsBody.addEventListener("click", (e)=>{
+    if(e.target.classList.contains("del")){
+      const tr = e.target.closest("tr");
+      const key = tr.dataset.key;
+      if(confirm(`Удалить метрику ${key}?`)){
+        delete cfg.metrics[key];
+        tr.remove();
+      }
+    }
+  });
+
+  rebuildTable();
+  render();
+</script>
+{% endblock %}

@@ -1,0 +1,62 @@
+"""Routes for the directory (campaign/mail rule mappings)."""
+
+from __future__ import annotations
+from pathlib import Path
+import yaml
+
+from fastapi import APIRouter, Depends, Request, Body
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session
+
+from ..database import get_db
+from ..crud import get_campaigns
+
+router = APIRouter()
+templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
+
+@router.get("/directory", response_class=HTMLResponse)
+def view_directory(request: Request, db: Session = Depends(get_db)):
+    campaigns = get_campaigns(db)
+    # читаем config.yaml и строим словарь {campaign_id: yandex_name}
+    try:
+        cfg = yaml.safe_load(open("config.yaml", "r", encoding="utf-8")) or {}
+        yc = cfg.get("yandex_campaigns") or []
+        yandex_map = {int(item["id"]): item.get("yandex_name") for item in yc if "id" in item}
+    except Exception:
+        yandex_map = {}
+    return templates.TemplateResponse(
+        "directory.html",
+        {"request": request, "campaigns": campaigns, "yandex_map": yandex_map},
+    )
+
+@router.post("/directory/yandex/update")
+def update_yandex_name(payload: dict = Body(...)):
+    """
+    Обновляет секцию yandex_campaigns в config.yaml.
+    payload: {"id": <int>, "yandex_name": <str>}
+    """
+    try:
+        cid = int(payload.get("id"))
+        name = str(payload.get("yandex_name", "")).strip()
+        if not name:
+            return JSONResponse(status_code=400, content={"error": "empty yandex_name"})
+
+        cfg_path = "config.yaml"
+        cfg = yaml.safe_load(open(cfg_path, "r", encoding="utf-8")) or {}
+        yc = cfg.get("yandex_campaigns") or []
+
+        # обновляем существующую запись либо добавляем новую
+        for item in yc:
+            if int(item.get("id")) == cid:
+                item["yandex_name"] = name
+                break
+        else:
+            yc.append({"id": cid, "yandex_name": name})
+
+        cfg["yandex_campaigns"] = yc
+        yaml.safe_dump(cfg, open(cfg_path, "w", encoding="utf-8"),
+                       allow_unicode=True, sort_keys=False)
+        return {"status": "ok"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})

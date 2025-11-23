@@ -1,0 +1,9 @@
+"""Collect FastAPI routers for inclusion in the application."""
+
+from .campaigns import router as campaigns_router
+from .directory import router as directory_router
+from .files import router as files_router
+
+__all__ = ["campaigns_router", "directory_router", "files_router"]
+from .cats_export import router as cats_export_router
+from .debug import router as debug_router

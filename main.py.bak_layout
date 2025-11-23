@@ -1,0 +1,74 @@
+from fastapi.responses import HTMLResponse
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
+
+from app.logging_setup import setup_logging
+from app.database import engine
+from app import models
+from app.routers import campaigns_router, directory_router, files_router, cats_export_router, debug_router
+from app.routers.settings import imap_folders_partial
+from app.routers.diag_bytes import router as diag_bytes_router
+from app.routers.debug import router as debug_router
+from app.routers.settings import imap_folders_partial
+from app.routers.cats_front import router as cats_front_router
+from app.routers.imap_ping import router as imap_ping_router
+from app.routers.diag_bytes import router as diag_bytes_router
+from app.routers.settings import imap_folders_partial
+from app.routers.settings import router as settings_router
+from app.routers.debug import router as debug_router
+from app.routers.settings import imap_folders_partial
+from app.routers.diag_bytes import router as diag_bytes_router
+from app.routers.logs import router as logs_router
+from app.routers.settings import imap_folders_partial
+from app.routers.cats_front import router as cats_front_router
+from app.routers.diag_bytes import router as diag_bytes_router
+from app.routers.settings import imap_folders_partial
+from app.routers.debug import router as debug_router
+
+# Логирование и БД
+setup_logging()
+app = FastAPI(title="Campaign Hub", version="0.2.0")
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+app.include_router(cats_export_router)
+# --- IMAP folders aliases (ensure both paths exist) ---
+app.add_api_route("/imap_folders", imap_folders_partial, name="imap_folders_partial_root", response_class=HTMLResponse)
+app.add_api_route("/settings/imap_folders", imap_folders_partial, name="imap_folders_partial_alias", response_class=HTMLResponse)
+# ------------------------------------------------------
+# --- IMAP folders aliases (ensure both paths exist) ---
+app.add_api_route("/imap_folders", imap_folders_partial, name="imap_folders_partial_root", response_class=HTMLResponse)
+app.add_api_route("/settings/imap_folders", imap_folders_partial, name="imap_folders_partial_alias", response_class=HTMLResponse)
+# ------------------------------------------------------
+app.include_router(diag_bytes_router)
+app.include_router(debug_router)
+app.include_router(cats_front_router)
+app.include_router(imap_ping_router)
+models.Base.metadata.create_all(bind=engine)
+
+# Редирект с корня на /settings
+@app.get("/")
+def root():
+    return RedirectResponse(url="/settings")
+
+# Роутеры
+app.include_router(campaigns_router)
+app.include_router(directory_router)
+app.include_router(files_router)
+app.include_router(settings_router)
+app.include_router(logs_router)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

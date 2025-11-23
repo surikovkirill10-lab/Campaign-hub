@@ -1,0 +1,149 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<style>
+  :root{
+    --nav-min: 180px;
+    --navW: max(10vw, var(--nav-min));
+    --topbar-h: 72px;
+    --name-ch: 44ch;
+  }
+  html, body { overflow-x: hidden; }
+  .cmpx-nav{ position: fixed; left:0; top:0; bottom:0; width:var(--navW); background:#303030; color:#fff;
+             padding: calc(var(--topbar-h) + 8px) .5rem .75rem; z-index: 20; }
+  .cmpx-nav h3{ color:#fff; font-size:.85rem; text-transform:uppercase; opacity:.8; margin:.25rem .75rem; }
+  .cmpx-nav a{ color:#fff; display:block; padding:.5rem .75rem; border-radius:4px; text-decoration:none; font-weight:500; margin-bottom:.25rem; }
+  .cmpx-nav a.is-active{ color:#00cccc; background:rgba(255,255,255,.08); }
+
+  .cmpx-main{ margin-left:var(--navW); width: calc(90vw - var(--navW)); padding: 5px; box-sizing:border-box; overflow-x:hidden; }
+  .cmpx-main .section, .cmpx-main .container{ max-width:none !important; width:100% !important; padding:0 !important; margin:0 !important; box-sizing:border-box; }
+
+  #toolbar{ max-width:100%; overflow:visible; box-sizing:border-box; }
+  #toolbar .field.is-grouped{ flex-wrap: wrap; gap: .5rem .5rem; }
+  #toolbar .control.is-expanded{ flex:1 1 260px; min-width:260px; }
+  #toolbar .control{ flex:0 0 auto; }
+
+  #bookings-table{ overflow-x:auto; overflow-y:visible; position:relative; -webkit-overflow-scrolling:touch; }
+  #bookings-table > table{ width:max-content; min-width:1200px; }
+  #bookings-table thead th{ position:sticky; top:0; z-index:4; background:#fff; box-shadow:0 1px 0 rgba(0,0,0,.06); }
+  #bookings-table th, #bookings-table td{ white-space:nowrap; }
+  #bookings-table td:nth-child(2){ white-space:normal; }
+  #bookings-table td:nth-child(2) .name-wrap{ display:inline-block; max-width: var(--name-ch); white-space: normal; overflow-wrap:anywhere; word-break: break-word; hyphens:auto; line-height:1.2; }
+
+  .dcell{ cursor:pointer; display:inline-block; padding:.2rem .5rem; border-radius:.5rem; font-size:0.95rem; line-height:1.1; border:1px solid rgba(0,0,0,.06); background:rgba(0,0,0,.02);
+          transition:transform .06s ease, background .06s ease, box-shadow .06s ease; }
+  .dcell:hover{ transform:translateY(-1px); box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  .dcell.is-static{ cursor:default; background:transparent; border-color:transparent; padding:0; }
+  .is-good{ color:#257942; background:rgba(38,188,102,.12); border-color:rgba(38,188,102,.28); font-weight:600; }
+  .is-bad{ color:#A61B1B; background:rgba(246,71,71,.12); border-color:rgba(246,71,71,.28); font-weight:600; }
+</style>
+
+<div class="cmpx-layout">
+  <aside class="cmpx-nav">
+    <h3>Menu</h3>
+    <a href="/campaigns">Campaigns</a>
+    <a href="/bookings" class="is-active">Брони</a>
+  </aside>
+
+  <main class="cmpx-main">
+    <div class="box p-3" id="toolbar">
+      <form id="filters"
+            class="mb-2"
+            hx-get="/bookings"
+            hx-target="#bookings-table"
+            hx-select="#bookings-table"
+            hx-swap="outerHTML"
+            hx-push-url="true">
+        <div class="field is-grouped is-grouped-multiline is-align-items-center">
+          <div class="control is-expanded" style="min-width:16rem">
+            <input class="input is-small" type="text" name="q" value="{{ q or '' }}" placeholder="Поиск: ID / название / клиент"
+                   hx-trigger="keyup changed delay:300ms" />
+          </div>
+          <div class="control">
+            <input class="input is-small" type="month" name="period" value="{{ period or '' }}" />
+          </div>
+          <div class="control">
+            <div class="select is-small">
+              <select name="sort" hx-trigger="change">
+                <option value="id"          {{ 'selected' if (sort or 'id')=='id' }}>ID</option>
+                <option value="name"        {{ 'selected' if sort=='name' }}>Название</option>
+                <option value="start_date"  {{ 'selected' if sort=='start_date' }}>Дата старта</option>
+                <option value="brand" {{ 'selected' if sort=='brand' }}>Клиент (бренд)</option>
+                <option value="client_brand" {{ 'selected' if sort=='client_brand' }}>Клиент (бренд)</option>
+                <option value="agency_name" {{ 'selected' if sort=='agency_name' }}>Агентство</option>
+                <option value="sales_manager" {{ 'selected' if sort=='sales_manager' }}>Сейлз</option>
+                <option value="vz_percent"  {{ 'selected' if sort=='vz_percent' }}>СК</option>
+              </select>
+            </div>
+          </div>
+          <div class="control">
+            <div class="select is-small">
+              <select name="dir" hx-trigger="change">
+                <option value="desc" {{ 'selected' if (dir or 'desc')=='desc' }}>По убыванию</option>
+                <option value="asc"  {{ 'selected' if dir=='asc' }}>По возрастанию</option>
+              </select>
+            </div>
+          </div>
+          <div class="control">
+            <button class="button is-small">Применить</button>
+          </div>
+        </div>
+      </form>
+
+      <!-- Добавление и импорт -->
+      <form action="/bookings" method="post">
+        <div class="field is-grouped is-grouped-multiline">
+          <div class="control is-expanded" style="min-width:16rem">
+            <input class="input is-small" type="text" name="name" placeholder="Название РК" required>
+          </div>
+          <div class="control">
+            <input class="input is-small" type="number" name="campaign_id" placeholder="ID РК (из Campaigns)">
+          </div>
+          <div class="control">
+            <button class="button is-link is-small" type="submit">Добавить</button>
+          </div>
+          <div class="control">
+            <label class="button is-info is-small">
+              Импорт Excel
+              <input type="file" name="file" accept=".xlsx,.xls" style="display:none"
+                     hx-post="/bookings/import_excel"
+                     hx-encoding="multipart/form-data"
+                     hx-target="#bookings-table"
+                     hx-swap="outerHTML">
+            </label>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <div id="bookings-table">
+      <table class="table is-striped is-fullwidth">
+      <thead>
+  <tr>
+    <th>ID</th>
+    <th>Название</th>
+    <th>Клиент</th>
+    <th>Агентство</th>
+    <th>Формат</th>
+    <th>Модель закупки</th>
+    <th>Сейлз</th>
+    <th>ID РК</th>
+    <th>Период</th>
+    <th>Бюджет (до НДС)</th>
+    <th>Инвентарь</th>
+    <th>СК</th>
+    <th>Действия</th>
+  </tr>
+</thead>
+
+        <tbody id="bookings-body">
+          {% for row in rows %}
+            {% include "bookings_row.html" %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+{% endblock %}

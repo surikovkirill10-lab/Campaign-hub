@@ -1,0 +1,41 @@
+from fastapi import APIRouter, Request
+from starlette.responses import RedirectResponse
+
+router = APIRouter()
+
+@router.api_route("/campaigns/add", methods=["GET","POST"])
+async def campaigns_add_get(id: str = "", add: str = "", name: str = ""):
+    cid = (id or add or "").strip()
+    if not cid.isdigit():
+        return RedirectResponse(url="/campaigns", status_code=303)
+    return RedirectResponse(url=f"/campaigns?add={cid}", status_code=303)
+
+@router.api_route("/campaigns/add", methods=["GET","POST"])
+async def campaigns_add_post(request: Request):
+    form = await request.form()
+    cid = (form.get("id") or form.get("add") or form.get("campaign_id") or "").strip()
+    if not cid.isdigit():
+        return RedirectResponse(url="/campaigns", status_code=303)
+    return RedirectResponse(url=f"/campaigns?add={cid}", status_code=303)
+
+
+# --- Add campaign via GET/POST (redirects to /campaigns?add=<id>) ---------------------------
+from fastapi import Request
+from starlette.responses import RedirectResponse
+
+@router.api_route("/campaigns/add", methods=["GET","POST"])
+async def campaigns_add_get(id: str = "", add: str = "", name: str = ""):
+    cid = (id or add or "").strip()
+    if not cid.isdigit():
+        return RedirectResponse(url="/campaigns", status_code=303)
+    return RedirectResponse(url=f"/campaigns?add={cid}", status_code=303)
+
+@router.api_route("/campaigns/add", methods=["GET","POST"])
+async def campaigns_add_post(request: Request):
+    form = await request.form()
+    cid = (form.get("id") or form.get("add") or form.get("campaign_id") or "").strip()
+    if not cid.isdigit():
+        return RedirectResponse(url="/campaigns", status_code=303)
+    return RedirectResponse(url=f"/campaigns?add={cid}", status_code=303)
+
+

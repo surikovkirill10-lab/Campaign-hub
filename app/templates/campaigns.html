@@ -1,0 +1,277 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<style>
+  :root{
+    --nav-min: 180px;
+    --navW: max(10vw, var(--nav-min));
+    --topbar-h: 72px; /* подстройте под реальную высоту шапки */
+    --name-ch: 44ch;  /* ≈ целевая длина строки в символах до переноса */
+  }
+
+  html, body { overflow-x: hidden; }
+ /* === prettier daily cells === */
+ .dcell{
+   cursor:pointer;
+   display:inline-block;
+   padding:.2rem .5rem;        /* больше воздуха */
+   border-radius:.5rem;         /* мягкие углы */
+   font-size:0.95rem;           /* крупнее цифры */
+   line-height:1.1;
+   border:1px solid rgba(0,0,0,.06);
+   background:rgba(0,0,0,.02);
+   transition:transform .06s ease, background .06s ease, box-shadow .06s ease;
+ }
+ .dcell:hover{ transform:translateY(-1px); box-shadow:0 1px 3px rgba(0,0,0,.06); }
+ .dcell:focus, .dcell:focus-visible{ outline:none; box-shadow:0 0 0 2px rgba(0,204,204,.25); }
+ .dcell.is-overridden{ color:#00cccc; border-color:rgba(0,204,204,.35); background:rgba(0,204,204,.06); font-weight:600; }
+
+ /* не редактируемые метрики выглядят как бейджи, но без курсора-руки */
+ .dcell.is-static{ cursor:default; background:transparent; border-color:transparent; padding:0; }
+
+ /* инпут внутри инлайн-редактора пошире и читабельней */
+ .dcell-editor input.input.is-small{
+   width:10ch;
+   text-align:right;
+   font-size:0.95rem;
+   padding:.3rem .5rem;
+   border-radius:.5rem;
+ }
+
+  /* Левое меню — фиксированное, с отступом под шапку */
+  .cmpx-nav{
+    position: fixed; left:0; top:0; bottom:0;
+    width: var(--navW);
+    background:#303030; color:#fff;
+    padding: calc(var(--topbar-h) + 8px) .5rem .75rem;
+    z-index: 20;
+  }
+  .cmpx-nav h3{ color:#fff; font-size:.85rem; text-transform:uppercase; opacity:.8; margin:.25rem .75rem; }
+  .cmpx-nav a{ color:#fff; display:block; padding:.5rem .75rem; border-radius:4px; text-decoration:none; font-weight:500; margin-bottom:.25rem; }
+  .cmpx-nav a.is-active{ color:#00cccc; background:rgba(255,255,255,.08); }
+
+  /* ПРАВАЯ КОЛОНКА
+     1) box-sizing: border-box — ширина включает padding (КЛЮЧЕВОЕ)
+     2) width на оставшуюся часть экрана, лёгкие внутренние отступы */
+  .cmpx-main{
+    margin-left: var(--navW);
+    width: calc(90vw - var(--navW));
+    padding: 5px 5px 5px;
+    box-sizing: border-box;          /* <<< ключ: чтобы padding не "вылазил" за ширину */
+    overflow-x: hidden;
+  }
+
+  /* Снять ограничения контейнеров Bulma внутри правой колонки */
+  .cmpx-main .section, .cmpx-main .container{
+    max-width: none !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box;
+  }
+
+  /* Тулбар — чтобы не "резался", переносился и не выходил за 100% */
+  #toolbar{ max-width:100%; overflow:visible; box-sizing:border-box; }
+  #toolbar .field.is-grouped{ flex-wrap: wrap; gap: .5rem .5rem; } /* жёстко включаем перенос */
+  #toolbar .control.is-expanded{ flex: 1 1 260px; min-width: 260px; } /* строка поиска тянется */
+  #toolbar .control{ flex: 0 0 auto; } /* остальные элементы — по содержимому */
+
+  /* Таблица может скроллиться по X, шапка липкая */
+  #campaigns-table{ overflow-x:auto; overflow-y:visible; position:relative; -webkit-overflow-scrolling:touch; }
+  #campaigns-table > table{ width:max-content; min-width:1200px; }
+  #campaigns-table th, #campaigns-table td{ white-space:nowrap; }
+  #campaigns-table td:nth-child(2){ white-space:normal; }
+  #campaigns-table thead th{ position:sticky; top:0; z-index:4; background:#fff; box-shadow:0 1px 0 rgba(0,0,0,.06); }
+  #campaigns-table td:nth-child(2) .name-wrap{  display: inline-block; max-width: var(--name-ch); white-space: normal;
+ overflow-wrap: anywhere;  /* переносить даже "слитные" куски и знаки +/– */
+word-break: break-word;   /* fallback для старых движков */
+hyphens: auto;            /* красота на дефисах, если браузер умеет */
+line-height: 1.2;
+}
+
+  /* ваши компактные размеры контролов */
+  #toolbar .field.is-grouped .control{ margin-right:.5rem; }
+  #toolbar .field.is-grouped .control:last-child{ margin-right:0; }
+  #toolbar .input.is-small, #toolbar .select.is-small select, #toolbar .button.is-small{ height:2.25em; }
+  #toolbar .mb-2{ margin-bottom:.5rem; }
+</style>
+
+<div class="cmpx-layout">
+  <!-- Left menu -->
+  <aside class="cmpx-nav">
+    <h3>Menu</h3>
+    <a href="/campaigns" class="{% if request.url.path == '/campaigns' %}is-active{% endif %}">Campaigns</a>
+    <a href="/campaigns/groups" class="{% if request.url.path.startswith('/campaigns/groups') %}is-active{% endif %}">Groups</a>
+    <a href="/campaigns/creatives" class="{% if request.url.path.startswith('/campaigns/creatives') %}is-active{% endif %}">Creatives</a>
+  </aside>
+
+  <!-- Main content -->
+  <main class="cmpx-main">
+    <!-- ===== всё, что ниже — это ваш исходный контент Campaigns ===== -->
+
+    <!-- Мини-панель для поиска, сортировки, добавления -->
+    <div class="box p-3" id="toolbar">
+      <!-- Форма фильтров -->
+      <form id="filters"
+            class="mb-2"
+            hx-get="/campaigns"
+            hx-target="#campaigns-table"
+            hx-select="#campaigns-table"
+            hx-swap="outerHTML"
+            hx-push-url="true">
+        <div class="field is-grouped is-grouped-multiline is-align-items-center">
+          <div class="control is-expanded" style="min-width:16rem">
+            <input class="input is-small"
+                   type="text"
+                   name="q"
+                   value="{{ q or '' }}"
+                   placeholder="Поиск: ID / название"
+                   hx-trigger="keyup changed delay:300ms" />
+          </div>
+
+          <div class="control">
+            <div class="select is-small">
+              <select name="sort" hx-trigger="change">
+                <option value="id"          {{ 'selected' if (sort or 'id')=='id' }}>ID</option>
+                <option value="name"        {{ 'selected' if sort=='name' }}>Название</option>
+                <option value="impressions" {{ 'selected' if sort=='impressions' }}>Показы</option>
+                <option value="clicks"      {{ 'selected' if sort=='clicks' }}>Клики</option>
+                <option value="uniques"     {{ 'selected' if sort=='uniques' }}>Охват</option>
+                <option value="ctr_ext"     {{ 'selected' if sort=='ctr_ext' }}>CTR</option>
+                <option value="freq"        {{ 'selected' if sort=='freq' }}>Частота</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="control">
+            <div class="select is-small">
+              <select name="dir" hx-trigger="change">
+                <option value="desc" {{ 'selected' if (dir or 'desc')=='desc' }}>По убыванию</option>
+                <option value="asc"  {{ 'selected' if dir=='asc' }}>По возрастанию</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="control">
+            <button class="button is-small">Применить</button>
+          </div>
+        </div>
+      </form>
+
+      <!-- Форма добавления кампании + кнопка импорта Cats -->
+<form action="/campaigns" method="post">
+  <div class="field is-grouped is-grouped-multiline">
+    <div class="control">
+      <input class="input is-small" type="number" name="id" id="campaign_id" placeholder="Campaign ID" required>
+    </div>
+    <div class="control is-expanded" style="min-width:16rem">
+      <input class="input is-small" type="text" name="name" placeholder="Campaign Name" required>
+    </div>
+    <div class="control">
+      <button class="button is-link is-small" type="submit">Add</button>
+    </div>
+
+    <div class="control">
+      <button type="button"
+              class="button is-info is-small"
+              hx-post="/campaigns/import_cats"
+              hx-target="#campaigns-body"
+              hx-swap="beforeend">
+        Import Cats
+      </button>
+    </div>
+
+    <!-- ⬇⬇⬇ ДОБАВЛЕНО: массовое обновление всех кампаний -->
+    <div class="control">
+      <button type="button"
+              class="button is-success is-small"
+              hx-post="/campaigns/pull_all"
+              hx-target="#bulk-status"
+              hx-swap="innerHTML">
+        Update All
+      </button>
+    </div>
+    <div class="control">
+      <span id="bulk-status" class="tag is-light">—</span>
+    </div>
+    <!-- ⬆⬆⬆ ДОБАВЛЕНО -->
+  </div>
+</form>
+    </div>
+
+    <!-- Таблица кампаний -->
+    <div id="campaigns-table">
+      <table class="table is-striped is-fullwidth">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Период</th>
+            <th>Показы</th>
+            <th>Клики</th>
+            <th>Расход</th>
+            <th>Охват</th>
+            <th>Конверсии</th>
+            <th>CTR</th>
+            <th>Частота</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="campaigns-body">
+          {% for row in campaigns %}
+          <tr id="row-{{ row.id }}">
+            <td>{{ row.id }}</td>
+            <td><span class="name-wrap" title="{{ row.name }}">{{ row.name }}</span></td>
+            <td>{% if row.min_date and row.max_date %}{{ row.min_date }} — {{ row.max_date }}{% else %}—{% endif %}</td>
+            <td><span id="imp-{{ row.id }}">{{ row.impressions or "–" }}</span></td>
+            <td><span id="clk-{{ row.id }}">{{ row.clicks or "–" }}</span></td>
+            <td>{{ row.spend or "–" }}</td>
+            <td><span id="uniq-{{ row.id }}">{{ row.uniques or "–" }}</span></td>
+            <td>{{ row.conversions or "–" }}</td>
+            <td><span id="ctr-{{ row.id }}">{{ "%.2f%%"|format(row.ctr_ext*100) if (row.ctr_ext is defined and row.ctr_ext is not none) else "–" }}</span></td>
+            <td><span id="freq-{{ row.id }}">{{ "%.2f"|format(row.freq) if (row.freq is defined and row.freq is not none) else "–" }}</span></td>
+            <td class="is-narrow">
+              <button type="button" class="button is-info is-small"
+                hx-post="/campaigns/{{ row.id }}/pull"
+                hx-target="#camp-{{ row.id }}-status"
+                hx-swap="innerHTML">Update</button>
+
+              <span id="camp-{{ row.id }}-status" class="tag is-light">—</span>
+
+              <button type="button" class="button is-warning is-small"
+                hx-post="/campaigns/{{ row.id }}/yandex_update"
+                hx-target="#camp-{{ row.id }}-status"
+                hx-swap="innerHTML">Yandex</button>
+
+              <button type="button" class="button is-small is-light"
+                hx-get="/campaigns/{{ row.id }}/daily5"
+                hx-target="#details-{{ row.id }}"
+                hx-swap="outerHTML">
+                <span hx-indicator="#details-{{ row.id }}">Details</span>
+              </button>
+
+              <button type="button" class="button is-small is-light is-danger is-outlined"
+                hx-get="/campaigns/{{ row.id }}/daily_empty"
+                hx-target="#details-{{ row.id }}"
+                hx-swap="outerHTML">Hide</button>
+
+              <button type="button" class="button is-small is-primary is-light"
+                hx-get="/campaigns/{{ row.id }}/edit"
+                hx-target="#row-{{ row.id }}"
+                hx-swap="outerHTML">Edit</button>
+
+              <button type="button" class="button is-small is-danger is-light"
+                hx-post="/campaigns/{{ row.id }}/delete"
+                hx-target="#row-{{ row.id }}"
+                hx-swap="outerHTML">Delete</button>
+            </td>
+          </tr>
+          <tr><td colspan="11" id="details-{{ row.id }}"></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </main>
+</div>
+{% endblock %}

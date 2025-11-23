@@ -1,0 +1,43 @@
+from fastapi import APIRouter, Request
+from starlette.responses import RedirectResponse
+from fastapi.responses import HTMLResponse
+import os, datetime, sqlite3, traceback
+
+router = APIRouter()                                             
+
+def _log(msg:str):
+    p = os.path.join(os.getcwd(), "logs", "save.log")
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(f"[{datetime.datetime.now().isoformat()}] {msg}\n")
+
+@router.post("/campaigns/save", response_class=HTMLResponse)
+async def campaigns_save(request: Request):
+    form = await request.form()
+    cid  = (form.get("id") or form.get("campaign_id") or "").strip()
+    name = (form.get("name") or form.get("campaign_name") or "").strip()
+    _log(f"POST /campaigns/save id={cid!r} name={name!r}")
+    if not cid.isdigit():
+        _log("invalid id → redirect /campaigns")
+        return RedirectResponse(url="/campaigns", status_code=303)
+
+    ok = False
+    try:
+        from app.services import crud
+        if hasattr(crud, "add"): crud.add(id=int(cid), name=name); ok=True; _log("crud.add OK")
+        elif hasattr(crud, "add_campaign"): crud.add_campaign(id=int(cid), name=name); ok=True; _log("crud.add_campaign OK")
+        else: _log("crud.* not found")
+    except Exception as e:
+        _log("crud EXC: "+repr(e)+"\\n"+traceback.format_exc())
+
+    if not ok:
+        try:
+            dbp = os.path.join(os.getcwd(), "campaign_hub.db")
+            con = sqlite3.connect(dbp); cur = con.cursor()
+            cur.execute("CREATE TABLE IF NOT EXISTS campaigns (id INTEGER PRIMARY KEY, name TEXT)")
+            cur.execute("INSERT OR IGNORE INTO campaigns (id,name) VALUES (?,?)", (int(cid), name))
+            con.commit(); con.close(); _log(f"fallback insert OK -> {dbp}")
+        except Exception as e:
+            _log("fallback EXC: "+repr(e)+"\\n"+traceback.format_exc())
+
+    _log("redirect /campaigns")
+    return RedirectResponse(url="/campaigns", status_code=303)

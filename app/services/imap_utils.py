@@ -1,0 +1,89 @@
+# app/services/imap_utils.py
+from __future__ import annotations
+import imaplib, re, logging
+from typing import Iterable, Tuple, List
+
+log = logging.getLogger("app")
+
+# --- санитайзеры ---
+def _sanitize_user_login(u: str) -> str:
+    if u is None: return ""
+    u = u.strip()
+    return (u.replace("\u00A0","").replace("\u2009","")
+             .replace("\u202F","").replace("\u200B",""))
+
+def _sanitize_app_password(p: str) -> str:
+    if p is None: return ""
+    p2 = re.sub(r"\s+", "", p, flags=re.UNICODE)
+    return (p2.replace("\u00A0","").replace("\u2009","")
+              .replace("\u202F","").replace("\u200B",""))
+
+def _sanitize_password_general(p: str) -> str:
+    if p is None: return ""
+    p2 = p.replace("\r","").replace("\n","").replace("\t","")
+    return (p2.replace("\u00A0","").replace("\u2009","")
+              .replace("\u202F","").replace("\u200B",""))
+
+class IMAPCompatClient:
+    """
+    Мини-обёртка над imaplib с интерфейсом, похожим на imapclient.IMAPClient.
+    Достаточно для list_folders/select_folder/search/fetch/logout.
+    """
+    def __init__(self, host: str, port: int = 993, ssl: bool = True):
+        if not ssl:
+            self._conn = imaplib.IMAP4(host, port)
+        else:
+            self._conn = imaplib.IMAP4_SSL(host, port)
+
+    # --- API совместимый ---
+    def login(self, user: str, password: str, two_factor: str | None = None):
+        user = _sanitize_user_login(user or "")
+        pwd = _sanitize_password_general(password or "")
+        if (two_factor or "").lower() == "app_password":
+            pwd = _sanitize_app_password(password or "")
+        # ВАЖНО: imaplib.login ожидает СТРОКИ, он сам кодирует
+        self._conn.login(user, pwd)
+        log.debug("IMAP string-login ok for %r (len=%d, 2FA=%s)", user, len(pwd), two_factor)
+    def select_folder(self, name: str, readonly: bool = True):
+        # imaplib: readonly=True -> 'READ-ONLY'
+        self._conn.select(f'"{name}"', readonly=readonly)
+
+    def search(self, criteria: str | Iterable[str] = 'ALL') -> List[bytes]:
+        # imaplib принимает критерии как отдельные args
+        if isinstance(criteria, str):
+            args = (None, criteria)
+        else:
+            args = (None, *criteria)
+        typ, data = self._conn.search(*args)
+        if typ != "OK" or not data:
+            return []
+        # data = [b'1 2 3']
+        return [uid for uid in data[0].split() if uid]
+
+    def fetch(self, uids: Iterable[bytes], parts: str = '(RFC822)') -> dict:
+        # imapclient возвращает dict; сделаем похожий
+        out = {}
+        for uid in uids:
+            typ, data = self._conn.fetch(uid, parts)
+            out[uid] = data
+        return out
+
+    def logout(self):
+        try:
+            self._conn.logout()
+        except Exception:
+            pass
+
+
+
+
+    # --- context manager support ---
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            self.logout()
+        finally:
+            return False
+

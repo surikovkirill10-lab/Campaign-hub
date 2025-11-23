@@ -1,0 +1,431 @@
+{% extends "layout.html" %}
+{% block content %}
+<style>
+  :root{ --nav-min: 180px; --navW: max(10vw, var(--nav-min)); --topbar-h: 72px; }
+  html, body { overflow-x: hidden; }
+
+  /* Левое меню */
+  .cmpx-nav{ position: fixed; left:0; top:0; bottom:0; width: var(--navW); background:#303030; color:#fff;
+             padding: calc(var(--topbar-h) + 8px) .5rem .75rem; z-index: 20; }
+  .cmpx-nav h3{ color:#fff; font-size:.85rem; text-transform:uppercase; opacity:.8; margin:.25rem .75rem; }
+  .cmpx-nav a{ color:#fff; display:block; padding:.5rem .75rem; border-radius:4px; text-decoration:none; font-weight:500; margin-bottom:.25rem; }
+  .cmpx-nav a.is-active{ color:#00cccc; background:rgba(255,255,255,.08); }
+
+  /* Правая колонка */
+  .cmpx-main{ margin-left:var(--navW); width: calc(90vw - var(--navW)); padding: 5px; box-sizing: border-box; overflow-x: hidden; }
+  .cmpx-main .section, .cmpx-main .container{ max-width: none !important; width:100% !important; padding:0 !important; margin:0 !important; box-sizing:border-box; }
+  .mb-2{ margin-bottom:.5rem; }
+
+  /* === раскладка details === */
+  .details-grid{
+    display:grid;
+    grid-template-columns: 1fr minmax(320px, 420px);
+    gap: 16px;
+    align-items:start;
+  }
+  @media (max-width: 1100px){
+    .details-grid{ grid-template-columns: 1fr; }
+  }
+
+  /* === левый бокс (скриншоты/график + daily5) === */
+  .scrn-card{ background:#fff; border:1px solid #e9e9ee; border-radius:6px; padding:12px; }
+  .scrn-head{ display:flex; align-items:center; justify-content:space-between; gap:.75rem; margin-bottom:.5rem; }
+  .scrn-title{ margin:0; }
+  .scrn-main{ width:100%; aspect-ratio: 16/9; background:#f5f5f5; border:1px dashed #ddd; border-radius:6px;
+              display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  .scrn-main img{ width:100%; height:100%; object-fit:contain; }
+
+  .shot-thumbs{ display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; margin-top:8px; }
+  .shot-thumb{ border:1px solid #e9e9ee; border-radius:6px; overflow:hidden; background:#fafafa; position:relative; }
+  .shot-thumb.is-primary{ outline:2px solid #00c4a7; }
+  .shot-thumb img{ display:block; width:100%; height:100%; object-fit:cover; }
+  .shot-actions{ display:flex; gap:.5rem; margin-top:.5rem; flex-wrap:wrap; }
+  .upload-note{ font-size:.85rem; opacity:.8; }
+
+  /* daily5 */
+  .daily5-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin-top:12px; flex-wrap:wrap; }
+  .cat-tabs .button{ min-width: 8.5rem; }
+  #daily5{ width:100%; max-width:100%; overflow-x:auto; }
+  .daily5-wrap{ width:100%; }
+
+  /* dcell из Campaigns (микро‑адаптация) */
+  .dcell{
+    cursor:pointer; display:inline-block; padding:.2rem .5rem; border-radius:.5rem; font-size:0.95rem; line-height:1.1;
+    border:1px solid rgba(0,0,0,.06); background:rgba(0,0,0,.02);
+    transition:transform .06s ease, background .06s ease, box-shadow .06s ease;
+  }
+  .dcell:hover{ transform:translateY(-1px); box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  .dcell.is-overridden{ color:#00cccc; border-color:rgba(0,204,204,.35); background:rgba(0,204,204,.06); font-weight:600; }
+
+  /* KPI справа */
+  .kpi-box{ border:1px solid #e9e9ee; border-radius:6px; padding:12px; position:sticky; top: calc(var(--topbar-h) + 8px); }
+  .kpi-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:.5rem; }
+  .kpi-table{ width:100%; border-collapse:collapse; }
+  .kpi-table th, .kpi-table td{ padding:.35rem .35rem; vertical-align:middle; }
+  .kpi-table th{ width:52%; font-weight:600; }
+  .kpi-table tr + tr td, .kpi-table tr + tr th{ border-top:1px dashed #e9e9ee; }
+  .kpi-table input.input{ height:2.25rem; }
+  .unit{ white-space:nowrap; opacity:.7; margin-left:.35rem; }
+  .kpi-footer{ display:flex; align-items:center; justify-content:space-between; gap:.75rem; margin-top:.75rem; }
+
+  /* iOS‑переключатель */
+  .ios-switch{ position:relative; display:inline-block; width:42px; height:24px; vertical-align:middle; margin:0 .35rem; }
+  .ios-switch input{ display:none; }
+  .ios-switch .slider{ position:absolute; cursor:pointer; inset:0; background:#d9d9de; transition:.2s; border-radius:999px; }
+  .ios-switch .slider:before{
+    content:""; position:absolute; height:20px; width:20px; left:2px; top:2px; background:#fff; border-radius:50%; transition:.2s; box-shadow:0 1px 3px rgba(0,0,0,.25);
+  }
+  .ios-switch input:checked + .slider{ background:#10c2bf; }
+  .ios-switch input:checked + .slider:before{ transform:translateX(18px); }
+</style>
+
+<div class="cmpx-layout">
+  <aside class="cmpx-nav">
+    <h3>Menu</h3>
+    <a href="/campaigns">Campaigns</a>
+    <a href="/bookings" class="is-active">Брони</a>
+  </aside>
+
+  <main class="cmpx-main">
+    <h2 class="title is-5">Booking #{{ b.id }} — {{ b.name }}</h2>
+    <div class="mb-2">
+      <span class="tag is-light">Client (Brand): {{ b.client_id or "—" }}</span>
+      <span class="tag is-light">Agency: {{ b.agency_id or "—" }}</span>
+      <span class="tag is-light">Period: {{ b.start_date or "—" }} — {{ b.end_date or "—" }}</span>
+      <span class="tag is-light">СК: {{ b.vz_percent|pct(1) if b.vz_percent is not none else "—" }}</span>
+    </div>
+
+    {% if camp %}
+      <div class="box">
+        <p class="mb-2"><strong>Campaign:</strong> {{ camp['name'] }} (ID {{ camp['id'] }})</p>
+        <p class="mb-2"><strong>Период РК:</strong> {{ camp['min_date'] }} — {{ camp['max_date'] }}</p>
+      </div>
+
+      <div class="details-grid">
+        <!-- LEFT -->
+        <section class="scrn-card">
+          <div class="scrn-head">
+            <h3 class="title is-6 scrn-title">Скриншоты</h3>
+            <div class="is-size-7 has-text-grey">
+              <span>Скриншоты</span>
+              <label class="ios-switch">
+                <input id="modeToggle" type="checkbox" aria-label="Переключить на график">
+                <span class="slider"></span>
+              </label>
+              <span>График</span>
+            </div>
+          </div>
+
+          <!-- слот: либо скриншоты, либо график -->
+          <div id="shots">
+            {% include "partials/_screenshots.html" %}
+          </div>
+          <div id="chart-wrap" class="scrn-main" style="display:none; padding:8px;">
+            <canvas id="kpiChart" height="240"></canvas>
+          </div>
+
+          <!-- Тулбар дневной статистики -->
+          <div class="daily5-toolbar">
+            <div class="buttons has-addons is-small cat-tabs" id="catTabs">
+              <button type="button" class="button is-link is-light is-selected" data-cat="media">Медийные</button>
+              <button type="button" class="button is-light" data-cat="post">Пост‑клик</button>
+              <button type="button" class="button is-light" data-cat="verify">Верификация</button>
+            </div>
+
+            <button id="toggleDailyBtn" type="button" class="button is-small is-light">Показать по дням</button>
+          </div>
+
+          <div id="daily5" class="daily5-wrap"></div>
+
+          <p class="is-size-7 has-text-grey" style="margin-top:.5rem">
+            Совет: клик по метрике в легенде — скрыть/показать. Alt/⌥‑клик (или Ctrl/⌘‑клик) — оставить только её.
+          </p>
+        </section>
+
+        <!-- RIGHT: KPI -->
+        <section class="kpi-box">
+          <div class="kpi-head">
+            <h3 class="title is-6">KPI клиента</h3>
+            <span class="tag is-light">ID РК: {{ camp['id'] }}</span>
+          </div>
+
+          <form id="client-kpi-form"
+                hx-post="/bookings/{{ b.id }}/save_client_kpi"
+                hx-trigger="change delay:600ms, submit"
+                hx-target="#kpi-flash"
+                hx-swap="innerHTML">
+            <input type="hidden" name="campaign_id" value="{{ camp['id'] }}">
+            {% set kpi = client_kpi or {} %}
+            <table class="kpi-table">
+              <thead><tr><th>Показатель</th><th>Значение</th></tr></thead>
+              <tbody>
+                <tr><th>CTR</th><td><input class="input kpi-input" name="ctr" type="number" step="0.01" min="0" placeholder="%" value="{{ kpi.get('ctr','') }}"><span class="unit">%</span></td></tr>
+                <tr><th>VTR</th><td><input class="input kpi-input" name="vtr" type="number" step="0.01" min="0" placeholder="%" value="{{ kpi.get('vtr','') }}"><span class="unit">%</span></td></tr>
+                <tr><th>Доходимость</th><td><input class="input kpi-input" name="reachability" type="number" step="0.01" min="0" placeholder="%" value="{{ kpi.get('reachability','') }}"><span class="unit">%</span></td></tr>
+                <tr><th>Отказы</th><td><input class="input kpi-input" name="bounce_rate" type="number" step="0.01" min="0" placeholder="%" value="{{ kpi.get('bounce_rate','') }}"><span class="unit">%</span></td></tr>
+                <tr><th>Глубина</th><td><input class="input kpi-input" name="depth" type="number" step="0.1" min="0" placeholder="страниц" value="{{ kpi.get('depth','') }}"></td></tr>
+                <tr><th>Время</th><td><input class="input kpi-input" name="time_on_site" type="number" step="0.1" min="0" placeholder="сек." value="{{ kpi.get('time_on_site','') }}"></td></tr>
+                <tr><th>Viewability</th><td><input class="input kpi-input" name="viewability" type="number" step="0.01" min="0" placeholder="%" value="{{ kpi.get('viewability','') }}"><span class="unit">%</span></td></tr>
+                <tr><th>Unsafe</th><td><input class="input kpi-input" name="unsafe" type="number" step="0.01" min="0" placeholder="%" value="{{ kpi.get('unsafe','') }}"><span class="unit">%</span></td></tr>
+                <tr><th>GIVT</th><td><input class="input kpi-input" name="givt" type="number" step="0.01" min="0" placeholder="%" value="{{ kpi.get('givt','') }}"><span class="unit">%</span></td></tr>
+                <tr><th>SIVT</th><td><input class="input kpi-input" name="sivt" type="number" step="0.01" min="0" placeholder="%" value="{{ kpi.get('sivt','') }}"><span class="unit">%</span></td></tr>
+                <tr><th>&Delta; Impr</th><td><input class="input kpi-input" name="delta_impr" type="number" step="1" value="{{ kpi.get('delta_impr','') }}"></td></tr>
+                <tr><th>&Delta; Clicks</th><td><input class="input kpi-input" name="delta_clicks" type="number" step="1" value="{{ kpi.get('delta_clicks','') }}"></td></tr>
+              </tbody>
+            </table>
+
+            <div class="kpi-footer">
+              <span id="kpi-flash" class="has-text-grey">Изменения сохраняются автоматически…</span>
+              <button type="submit" class="button is-primary is-light">Сохранить KPI</button>
+            </div>
+          </form>
+        </section>
+      </div>
+
+    {% else %}
+      <article class="message is-warning">
+        <div class="message-body">Эта бронь не привязана к кампании. Укажите ID РК в списке «Брони».</div>
+      </article>
+    {% endif %}
+  </main>
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+(function(){
+  const catTabs = document.getElementById('catTabs');
+  const daily = document.getElementById('daily5');
+  const toggleDailyBtn = document.getElementById('toggleDailyBtn');
+  const modeToggle = document.getElementById('modeToggle');
+  const shotsBlock = document.getElementById('shots');
+  const chartWrap = document.getElementById('chart-wrap');
+
+  let currentCat = 'media';
+  let chartInstance = null;
+
+  /* ---------- Утилиты ---------- */
+  const numRU = new Intl.NumberFormat('ru-RU');
+  function isPercentMetric(name){
+    const n = (name||'').toLowerCase();
+    return ['ctr','vtr','viewability','unsafe','givt','sivt','verifier vtr','верификатор'].some(x=> n.includes(x));
+  }
+  function parseNumber(s){
+    if(!s) return null;
+    s = s.replace(/\s+/g,'').replace(',', '.').replace('%','');
+    if(/^\d+:\d{2}$/.test(s)){ const [m,sec] = s.split(':').map(Number); return m*60+sec; } // mm:ss
+    const num = parseFloat(s);
+    return isNaN(num) ? null : num;
+  }
+  function headerIndexes(){
+    const table = daily.querySelector('table');
+    if(!table) return {headers:[], found:{}};
+    const heads = Array.from(table.querySelectorAll('thead th'));
+    const headers = heads.length ? heads : Array.from(table.querySelectorAll('tbody tr:first-child th, tbody tr:first-child td'));
+    const sets = {
+      media: ['Дата','Показы','Клики','CTR','VTR','Охват','Частота'],
+      post:  ['Дата','Визиты','Доходимость','Отказы','Глубина','Время'],
+      verify:['Дата','Viewability','Verifier VTR','Unsafe','GIVT','SIVT','Δ Impr','Δ Clicks','Delta Impr','Delta Clicks']
+    };
+    const toIdx = (needle) => {
+      const n = needle.toLowerCase();
+      for (let i=0; i<headers.length; i++){
+        const t = headers[i].textContent.trim().toLowerCase();
+        if (t===n || t.includes(n)) return i;
+      }
+      return -1;
+    };
+    const found = {};
+    Object.entries(sets).forEach(([cat, arr])=>{
+      found[cat] = arr.map(name => [name, toIdx(name)]);
+    });
+    return {headers, found};
+  }
+  function filterDailyColumns(){
+    const table = daily.querySelector('table');
+    if(!table) return;
+    const {found} = headerIndexes();
+    const list = found[currentCat] || [];
+    const showIdx = new Set();
+    list.forEach(([name, idx])=>{ if(idx>=0) showIdx.add(idx); });
+    table.querySelectorAll('tr').forEach(tr=>{
+      Array.from(tr.children).forEach((cell, i)=>{
+        cell.style.display = showIdx.has(i) ? '' : 'none';
+      });
+    });
+  }
+  async function ensureDailyLoaded(){
+    if(daily.innerHTML.trim()) return;
+    const res = await fetch('/campaigns/{{ b.campaign_id }}/daily5', { credentials:'same-origin' });
+    daily.innerHTML = await res.text();
+  }
+
+  /* ---------- Работа с графиком ---------- */
+  function visibleRangeForAxis(chart, axisID){
+    let min=Infinity, max=-Infinity, found=false;
+    chart.data.datasets.forEach((ds, i) => {
+      const meta = chart.getDatasetMeta(i);
+      if (meta.hidden || ds.yAxisID !== axisID) return;
+      ds.data.forEach(v => { if(v==null) return; found=true; if(v<min) min=v; if(v>max) max=v; });
+    });
+    return found ? {min, max} : null;
+  }
+  function rescaleAxes(chart){
+    const y1 = visibleRangeForAxis(chart,'y1');
+    const y2 = visibleRangeForAxis(chart,'y2');
+
+    chart.options.scales.y1.display = !!y1;
+    chart.options.scales.y2.display = !!y2;
+
+    if(y1){
+      const pad = (y1.max - y1.min) * 0.08 || y1.max * 0.08 || 1;
+      chart.options.scales.y1.suggestedMin = Math.max(0, y1.min - pad);
+      chart.options.scales.y1.suggestedMax = y1.max + pad;
+    }
+    if(y2){
+      const pad = (y2.max - y2.min) * 0.10 || y2.max * 0.10 || 1;
+      chart.options.scales.y2.suggestedMin = Math.max(0, y2.min - pad);
+      chart.options.scales.y2.suggestedMax = Math.min(100, y2.max + pad*1.2);
+    }
+  }
+
+  function customLegendClick(e, legendItem, legend){
+    const chart = legend.chart;
+    const idx = legendItem.datasetIndex;
+    const meta = chart.getDatasetMeta(idx);
+    const isolate = e.native && (e.native.altKey || e.native.ctrlKey || e.native.metaKey);
+
+    if(isolate){
+      // если все прочие уже скрыты — покажем все; иначе — оставим только выбранный
+      const othersVisible = chart.data.datasets.some((_, i) => i!==idx && !chart.getDatasetMeta(i).hidden);
+      chart.data.datasets.forEach((_, i) => { chart.getDatasetMeta(i).hidden = (othersVisible ? i!==idx : false); });
+    } else {
+      meta.hidden = !meta.hidden;
+    }
+    rescaleAxes(chart);
+    chart.update();
+  }
+
+  function renderChart(){
+    const table = daily.querySelector('table');
+    if(!table || !window.Chart) return;
+
+    const {headers, found} = headerIndexes();
+    const list = found[currentCat] || [];
+    let dateIdx = -1;
+    list.forEach(([name, idx])=>{ if(name.toLowerCase()==='дата') dateIdx = idx; });
+
+    const indices = list.filter(([name, idx])=> idx>=0 && (name.toLowerCase()!=='дата'))
+                        .map(([name, idx])=> ({ idx, name: headers[idx]?.textContent?.trim() || name }));
+
+    const rows = Array.from(table.querySelectorAll('tbody tr'));
+    const labels = [];
+    const series = indices.map(d => ({ name: d.name, data: [], percent: isPercentMetric(d.name) }));
+
+    rows.forEach(tr=>{
+      const cells = Array.from(tr.children);
+      const dt = (cells[dateIdx] ? cells[dateIdx].textContent.trim() : '');
+      if(dt) labels.push(dt);
+      indices.forEach((d, si)=>{
+        const val = parseNumber(cells[d.idx] ? cells[d.idx].textContent.trim() : '');
+        series[si].data.push(val);
+      });
+    });
+
+    const ctx = document.getElementById('kpiChart').getContext('2d');
+    if(chartInstance){ chartInstance.destroy(); }
+
+    const datasets = series.map(s => ({
+      label: s.name,
+      data: s.data,
+      tension: 0.25,
+      pointRadius: 2,
+      fill: false,
+      yAxisID: s.percent ? 'y2' : 'y1'
+    }));
+
+    chartInstance = new Chart(ctx, {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position:'bottom', onClick: customLegendClick, labels: { usePointStyle: true } },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const name = ctx.dataset.label || '';
+                const y = ctx.parsed.y;
+                if (ctx.dataset.yAxisID === 'y2') {
+                  return ` ${name}: ${ (y ?? 0).toFixed(2).replace('.', ',') }%`;
+                }
+                return ` ${name}: ${ numRU.format(y ?? 0) }`;
+              }
+            }
+          }
+        },
+        scales: {
+          y1: { type: 'linear', position: 'left',
+                ticks: { callback: (v) => numRU.format(v) } },
+          y2: { type: 'linear', position: 'right', grid: { drawOnChartArea:false },
+                ticks: { callback: (v) => (v).toLocaleString('ru-RU') + '%' } },
+          x:  { ticks: { autoSkip:true, maxTicksLimit:12 } }
+        }
+      }
+    });
+
+    rescaleAxes(chartInstance);
+    chartInstance.update();
+  }
+
+  /* ---------- События UI ---------- */
+  catTabs?.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button[data-cat]');
+    if(!btn) return;
+    currentCat = btn.dataset.cat;
+    catTabs.querySelectorAll('.button').forEach(b=>{
+      const on = b===btn;
+      b.classList.toggle('is-selected', on);
+      b.classList.toggle('is-link', on);
+      b.classList.add('is-light');
+    });
+    if(daily.innerHTML.trim()){
+      filterDailyColumns();
+      if(modeToggle.checked) renderChart();
+    }
+  });
+
+  toggleDailyBtn?.addEventListener('click', async ()=>{
+    if(daily.innerHTML.trim()){
+      daily.innerHTML = '';
+      toggleDailyBtn.textContent = 'Показать по дням';
+      return;
+    }
+    await ensureDailyLoaded();
+    filterDailyColumns();
+    toggleDailyBtn.textContent = 'Скрыть';
+    if(modeToggle.checked) renderChart();
+  });
+
+  modeToggle?.addEventListener('change', async ()=>{
+    const isGraph = modeToggle.checked;
+    shotsBlock.style.display = isGraph ? 'none' : '';
+    chartWrap.style.display = isGraph ? '' : 'none';
+    if(isGraph){
+      await ensureDailyLoaded();
+      filterDailyColumns();
+      renderChart();
+    }
+  });
+
+  window.addEventListener('load', async ()=>{
+    if(modeToggle.checked){
+      await ensureDailyLoaded();
+      filterDailyColumns();
+      renderChart();
+    }
+  });
+})();
+</script>
+{% endblock %}

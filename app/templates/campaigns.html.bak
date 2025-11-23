@@ -1,0 +1,207 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<!-- COMPACT TOOLBAR + ADD (в одном box) -->
+<style>
+  /* компактные отступы и высота контролов */
+  #toolbar .field.is-grouped .control { margin-right: .5rem; }
+  #toolbar .field.is-grouped .control:last-child { margin-right: 0; }
+  #toolbar .input.is-small,
+  #toolbar .select.is-small select,
+  #toolbar .button.is-small { height: 2.25em; }
+  #toolbar .mb-2 { margin-bottom: .5rem; }
+
+  #campaigns-table thead{
+    position: sticky; top: var(--ch-top-offset,56px); z-index:4;
+  }
+
+</style>
+
+<div class="box p-3" id="toolbar">
+
+  <!-- Фильтры: одна строка -->
+  <form id="filters"
+        class="mb-2"
+        hx-get="/campaigns"
+        hx-target="#campaigns-table"
+        hx-swap="outerHTML"
+        hx-push-url="true" hx-select="#campaigns-table">
+    <div class="field is-grouped is-grouped-multiline is-align-items-center">
+      <div class="control is-expanded" style="min-width:16rem">
+        <input class="input is-small"
+               type="text"
+               name="q"
+               value="{{ q or '' }}"
+               placeholder="Поиск: ID / название"
+               hx-trigger="keyup changed delay:300ms" />
+      </div>
+
+      <div class="control">
+        <div class="select is-small">
+          <select name="sort" hx-trigger="change">
+            <option value="id"          {{ 'selected' if (sort or 'id')=='id' }}>ID</option>
+            <option value="name"        {{ 'selected' if sort=='name' }}>Название</option>
+            <option value="impressions" {{ 'selected' if sort=='impressions' }}>Показы</option>
+            <option value="clicks"      {{ 'selected' if sort=='clicks' }}>Клики</option>
+            <option value="uniques"     {{ 'selected' if sort=='uniques' }}>Охват</option>
+            <option value="ctr_ext"     {{ 'selected' if sort=='ctr_ext' }}>CTR</option>
+            <option value="freq"        {{ 'selected' if sort=='freq' }}>Частота</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="control">
+        <div class="select is-small">
+          <select name="dir" hx-trigger="change">
+            <option value="desc" {{ 'selected' if (dir or 'desc')=='desc' }}>По убыванию</option>
+            <option value="asc"  {{ 'selected' if dir=='asc' }}>По возрастанию</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="control">
+        <button class="button is-small">Применить</button>
+      </div>
+    </div>
+  </form>
+
+  <!-- Быстрое добавление кампании (тот же box) -->
+  <form action="/campaigns" method="post">
+    <div class="field is-grouped is-grouped-multiline">
+      <div class="control">
+        <input class="input is-small" type="number" name="id" id="campaign_id" placeholder="Campaign ID" required>
+      </div>
+      <div class="control is-expanded" style="min-width:16rem">
+        <input class="input is-small" type="text" name="name" placeholder="Campaign Name" required>
+      </div>
+      <div class="control">
+        <button class="button is-link is-small" type="submit">Add</button>
+      </div>
+      <div class="control">
+  <button type="button"
+          class="button is-info is-small"
+          hx-post="/campaigns/import_cats"
+          hx-target="#campaigns-body"
+          hx-swap="beforeend">
+    Import Cats
+  </button>
+</div>
+    </div>
+  </form>
+</div>
+
+<!-- Таблица кампаний (блок целиком меняется HTMX по фильтрам) -->
+<style id="table-scroll-css">\n  :root{ --ch-top-offset:56px; }
+  /* горизонтальный скролл контейнера */
+  #campaigns-table{
+    overflow-x:auto; 
+    -webkit-overflow-scrolling: touch;
+   position:relative;}
+  /* даём таблице возможность быть шире контейнера */
+  #campaigns-table > table{ width:max-content; min-width:1200px; }
+  /* не переносим всё подряд, чтобы было зачем скроллить */
+  #campaigns-table th, #campaigns-table td{ white-space:nowrap; }
+  /* колонку Name оставим переносимой, чтобы строки не росли бесконечно */
+  #campaigns-table td:nth-child(2){ white-space:normal; }
+
+  /* закрепляем строку заголовков таблицы */
+  #campaigns-table thead th{
+    position: sticky;
+    top: var(--ch-top-offset,56px);              /* при необходимости подними, напр. top: 56px */
+    z-index: 5;          /* поверх строк */
+    background: #fff;    /* фон, чтобы не просвечивали строки */
+    box-shadow: 0 1px 0 rgba(0,0,0,.06);
+  }
+</style>
+
+<div id="campaigns-table">
+  <table class="table is-striped is-fullwidth">
+    <thead>
+      <tr>
+        <th>ID</th><th>Name</th><th>Период</th><th>Показы</th><th>Клики</th>
+        <th>Расход</th><th>Охват</th><th>Конверсии</th><th>CTR</th><th>Частота</th><th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="campaigns-body">
+    {% for row in campaigns %}
+      <!-- основная строка -->
+      <tr id="row-{{ row.id }}">
+        <td>{{ row.id }}</td>
+        <td>{{ row.name }}</td>
+        <td>
+          {% if row.min_date and row.max_date %}{{ row.min_date }} — {{ row.max_date }}{% else %}—{% endif %}
+        </td>
+
+        <!-- тоталы в основной строке ОТОБРАЖАЮТСЯ через oob-обновление этих span -->
+        <td><span id="imp-{{ row.id }}">{{ row.impressions or "–" }}</span></td>
+        <td><span id="clk-{{ row.id }}">{{ row.clicks or "–" }}</span></td>
+        <td>{{ row.spend or "–" }}</td>
+        <td><span id="uniq-{{ row.id }}">{{ row.uniques or "–" }}</span></td>
+        <td>{{ row.conversions or "–" }}</td>
+        <td><span id="ctr-{{ row.id }}">{{ "%.2f%%"|format(row.ctr_ext*100) if (row.ctr_ext is defined and row.ctr_ext is not none) else "–" }}</span></td>
+        <td><span id="freq-{{ row.id }}">{{ "%.2f"|format(row.freq) if (row.freq is defined and row.freq is not none) else "–" }}</span></td>
+
+        <td class="is-narrow">
+          <!-- Обновление данных -->
+          <button type="button" class="button is-info is-small"
+            hx-post="/campaigns/{{ row.id }}/pull"
+            hx-target="#camp-{{ row.id }}-status"
+            hx-swap="innerHTML">
+            Update
+          </button>
+
+          <span id="camp-{{ row.id }}-status" class="tag is-light">—</span>
+
+          <button type="button" class="button is-warning is-small"
+            hx-post="/campaigns/{{ row.id }}/yandex_update"
+            hx-target="#camp-{{ row.id }}-status"
+            hx-swap="innerHTML">Yandex</button>
+
+          <button type="button" class="button is-small is-light"
+            hx-get="/campaigns/{{ row.id }}/daily5"
+            hx-target="#details-{{ row.id }}"
+            hx-swap="outerHTML"><span hx-indicator="#details-{{ row.id }}">Details</span></button>
+
+          <button type="button" class="button is-small is-light is-danger is-outlined"
+            hx-get="/campaigns/{{ row.id }}/daily_empty"
+            hx-target="#details-{{ row.id }}"
+            hx-swap="outerHTML">
+            Hide
+          </button>
+
+          <!-- Новые кнопки: Edit & Delete -->
+          <button type="button" class="button is-small is-primary is-light"
+            hx-get="/campaigns/{{ row.id }}/edit"
+            hx-target="#row-{{ row.id }}"
+            hx-swap="outerHTML">
+            Edit
+          </button>
+
+          <button type="button" class="button is-small is-danger is-light"
+            hx-post="/campaigns/{{ row.id }}/delete"
+            hx-target="#row-{{ row.id }}"
+            hx-swap="outerHTML">
+            Delete
+          </button>
+        </td>
+      </tr>
+
+      <!-- контейнер под Details -->
+      <tr><td colspan="11" id="details-{{ row.id }}"></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}
+<style id="table-sticky-override">
+  :root{ --ch-top-offset:56px; }
+  #campaigns-table{overflow-x:auto; overflow-y:visible; position:relative;}
+  #campaigns-table thead{position:static !important; top:auto !important;}
+  #campaigns-table thead th{position:sticky; top:var(--ch-top-offset,56px); z-index:10; background:#fff; box-shadow:0 1px 0 rgba(0,0,0,.06);}
+</style>
+<style id="ch-sticky-override">
+#campaigns-table { overflow-x: auto; overflow-y: visible; position: relative; }
+#campaigns-table thead { position: static !important; top: auto !important; }
+#campaigns-table thead th { position: sticky; top: 56px; z-index: 10; background: #fff; border-bottom: 1px solid #eaeaea; }
+</style>

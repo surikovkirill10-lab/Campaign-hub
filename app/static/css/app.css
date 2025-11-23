@@ -1,0 +1,79 @@
+:root{
+  --nav-bg:#111111;
+  --nav-bg-hover:#1a1a1a;
+  --nav-text:#ffffff;
+  --nav-text-hover:#dddddd;
+  --nav-active-bg:#00cccc;
+  --nav-active-text:#ffffff;
+}
+:root{
+  --container-max: 1216px;   /* тот же максимум, что у основного .container */
+  --container-pad: 24px;     /* горизонтальный внутренний отступ контейнера */
+}
+.topbar{position:sticky;top:0;left:0;right:0;z-index:1000;background:var(--nav-bg);border-bottom:1px solid #222;}
+.topbar .wrap{
+  max-width: var(--container-max);
+  margin: 0 auto;
+  padding: 10px var(--container-pad);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.topbar .brand{
+  display:flex;
+  align-items:center;
+  gap:16px;            /* было 10-12, увеличили зазор между логотипом и текстом */
+  text-decoration:none;
+}
+.topbar .brand img{height:  22px;width:auto;display:block;}
+.topbar .brand span{color:var(--nav-text);font-weight:700;letter-spacing:.2px}
+.topnav{
+  display:flex;
+  align-items:center;
+  gap:10px;            /* чуть больше расстояние между пунктами */
+  margin-left:auto;
+}
+.topnav a{
+  display:inline-flex;
+  align-items:center;
+  height:34px;         /* фиксируем высоту для ровной линии */
+  line-height:1;
+  color:var(--nav-text);
+  text-decoration:none;
+  padding:0 12px;      /* горизонтальный отступ */
+  border-radius:8px;
+  font-weight:500;
+  transition:color .15s, background-color .15s, transform .04s;
+}
+.topnav a:hover{color:var(--nav-text-hover);background:var(--nav-bg-hover);}
+.topnav a:active{transform:translateY(1px)}
+.topnav a.active{background:var(--nav-active-bg);color:var(--nav-active-text);font-weight:700;}
+.page-shell{padding-top:10px;}
+@media (max-width:640px){.topbar .wrap{
+  max-width: var(--container-max);
+  margin: 0 auto;
+  padding: 10px var(--container-pad);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}.topnav a{
+  display:inline-flex;
+  align-items:center;
+  height:34px;         /* фиксируем высоту для ровной линии */
+  line-height:1;
+  color:var(--nav-text);
+  text-decoration:none;
+  padding:0 12px;      /* горизонтальный отступ */
+  border-radius:8px;
+  font-weight:500;
+  transition:color .15s, background-color .15s, transform .04s;
+}}
+
+
+.page-shell > .container{
+  max-width: var(--container-max);
+  padding-left: var(--container-pad);
+  padding-right: var(--container-pad);
+  margin-left: auto;
+  margin-right: auto;
+}
