@@ -1,0 +1,415 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<style>
+  :root{
+    --nav-min: 180px;
+    --navW: max(10vw, var(--nav-min));
+    --topbar-h: 72px;
+    --name-ch: 44ch;
+  }
+
+  html, body { overflow-x: hidden; }
+
+  .cmpx-nav{
+    position: fixed; left:0; top:0; bottom:0;
+    width: var(--navW);
+    background:#303030; color:#fff;
+    padding: calc(var(--topbar-h) + 8px) .5rem .75rem;
+    z-index: 20;
+  }
+  .cmpx-nav h3{
+    color:#fff; font-size:.85rem; text-transform:uppercase;
+    opacity:.8; margin:.25rem .75rem;
+  }
+  .cmpx-nav a{
+    color:#fff; display:block; padding:.5rem .75rem;
+    border-radius:4px; text-decoration:none;
+    font-weight:500; margin-bottom:.25rem;
+  }
+  .cmpx-nav a.is-active{
+    color:#00cccc;
+    background:rgba(255,255,255,.08);
+  }
+
+  .cmpx-main{
+    margin-left: var(--navW);
+    width: calc(90vw - var(--navW));
+    padding: 5px;
+    box-sizing:border-box;
+    overflow-x:hidden;
+  }
+  .cmpx-main .section,
+  .cmpx-main .container{
+    max-width:none !important;
+    width:100% !important;
+    padding:0 !important;
+    margin:0 !important;
+    box-sizing:border-box;
+  }
+
+  #toolbar{ max-width:100%; overflow:visible; box-sizing:border-box; }
+  #toolbar .field.is-grouped{ flex-wrap: wrap; gap: .5rem .5rem; }
+  #toolbar .control.is-expanded{ flex:1 1 260px; min-width:260px; }
+  #toolbar .control{ flex:0 0 auto; }
+
+  #chartbox{ max-width:100%; overflow:visible; box-sizing:border-box; }
+  #chartbox .field.is-grouped{ flex-wrap: wrap; gap: .5rem .5rem; }
+  #chartbox .control.is-expanded{ flex:1 1 360px; min-width:300px; }
+
+  #margin-table{
+    overflow-x:auto;
+    overflow-y:visible;
+    position:relative;
+    -webkit-overflow-scrolling:touch;
+  }
+  #margin-table > table{
+    width:max-content;
+    min-width:1100px;
+  }
+  #margin-table th,
+  #margin-table td{
+    white-space:nowrap;
+  }
+  #margin-table td:nth-child(2){
+    white-space:normal;
+  }
+  #margin-table td:nth-child(2) .name-wrap{
+    display:inline-block;
+    max-width: var(--name-ch);
+    white-space:normal;
+    overflow-wrap:anywhere;
+    word-break:break-word;
+    hyphens:auto;
+    line-height:1.2;
+  }
+  #margin-table thead th{
+    position:sticky;
+    top:0;
+    z-index:4;
+    background:#fff;
+    box-shadow:0 1px 0 rgba(0,0,0,.06);
+  }
+
+  .percent-tag{
+    font-weight:600;
+  }
+  .percent-tag.is-thrush{
+    color:#135f7f;
+    background:#d9f1ff;
+    border:1px solid #9cd0f0;
+  }
+  .percent-tag.is-good{
+    color:#257942;
+    background:rgba(38,188,102,.12);
+    border:1px solid rgba(38,188,102,.28);
+  }
+  .percent-tag.is-warning{
+    color:#8a6d1f;
+    background:#fff4c2;
+    border:1px solid #f0e0a0;
+  }
+  .percent-tag.is-bad{
+    color:#a61b1b;
+    background:rgba(246,71,71,.12);
+    border:1px solid rgba(246,71,71,.28);
+  }
+
+  .comment-form .input.is-small{
+    min-width:14rem;
+  }
+
+  .chart-wrap{
+    position: relative;
+    width: 100%;
+    height: 260px;
+  }
+</style>
+
+<div class="cmpx-layout">
+  <!-- Левое меню -->
+  <aside class="cmpx-nav">
+    <h3>Menu</h3>
+
+    <a href="/campaigns"
+       class="{% if request.url.path == '/campaigns' %}is-active{% endif %}">
+      Campaigns
+    </a>
+
+    <a href="/campaigns/groups"
+       class="{% if request.url.path.startswith('/campaigns/groups') %}is-active{% endif %}">
+      Groups
+    </a>
+
+    <a href="/campaigns/creatives"
+       class="{% if request.url.path.startswith('/campaigns/creatives') %}is-active{% endif %}">
+      Creatives
+    </a>
+
+    <a href="/campaigns/margin"
+       class="{% if request.url.path.startswith('/campaigns/margin') %}is-active{% endif %}">
+      Маржинальность
+    </a>
+  </aside>
+
+  <!-- Правая часть -->
+  <main class="cmpx-main">
+
+    <!-- Тулбар -->
+    <div class="box p-3" id="toolbar">
+      <div class="field is-grouped is-grouped-multiline is-align-items-center">
+        <div class="control is-expanded">
+          <span class="tag is-medium is-light">
+            Текущий месяц:
+            <strong>{{ month_key[:7] }}</strong>.
+            Последний апдейт:
+            {% if latest_snapshot_date %}
+              <strong>{{ latest_snapshot_date }}</strong>.
+            {% else %}
+              —
+            {% endif %}
+            Средний % закупки:
+            {% if avg_purchase_percent is not none %}
+              <strong>{{ '%.2f'|format(avg_purchase_percent) }}%</strong>
+            {% else %}
+              —
+            {% endif %}
+          </span>
+        </div>
+        <div class="control">
+          <button type="button"
+                  class="button is-success is-small"
+                  hx-post="/campaigns/margin/update_all"
+                  hx-target="#margin-status"
+                  hx-swap="innerHTML"
+                  hx-on="htmx:afterRequest: if(window.reloadMarginChart){window.reloadMarginChart();}">
+            Update All
+          </button>
+        </div>
+        <div class="control">
+          <span id="margin-status" class="tag is-light">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- График -->
+    <div class="box p-3" id="chartbox">
+      <div class="field is-grouped is-grouped-multiline is-align-items-center">
+        <div class="control">
+          <div class="select is-small">
+            <select id="margin-filter-model">
+              <option value="">Все модели</option>
+              <option value="cpm">CPM</option>
+              <option value="cpc">CPC</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="control is-expanded">
+          <div class="select is-small is-fullwidth">
+            <select id="margin-filter-booking">
+              <option value="">Все РК</option>
+              {% for opt in booking_options %}
+                <option value="{{ opt.booking_id }}">{{ opt.name }} ({{ opt.booking_id }})</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="control">
+          <button type="button" class="button is-small" onclick="reloadMarginChart()">
+            Обновить график
+          </button>
+        </div>
+
+        <div class="control">
+          <span class="tag is-light">
+            Точек: <span id="margin-chart-points">0</span>
+          </span>
+        </div>
+      </div>
+
+      <div class="chart-wrap">
+        <canvas id="marginChart"></canvas>
+      </div>
+      <p class="help has-text-grey">
+        График показывает средний % закупки по дням апдейта (снапшоты из БД).
+      </p>
+    </div>
+
+    <!-- Таблица маржинальности -->
+    <div id="margin-table">
+      <table class="table is-striped is-fullwidth">
+        <thead>
+          <tr>
+            <th>Booking ID</th>
+            <th>Название РК</th>
+            <th>Клиент</th>
+            <th>Агентство</th>
+            <th>Модель закупки</th>
+            <th>Инвентарь</th>
+            <th>Клиентская цена</th>
+            <th>Средний CPM/CPC (Cats)</th>
+
+            {% for d in snapshot_dates %}
+              <th title="{{ d }}">% ({{ d[8:10] }}.{{ d[5:7] }})</th>
+            {% endfor %}
+
+            <th>Комментарий</th>
+          </tr>
+        </thead>
+
+        <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.booking_id }}</td>
+            <td>
+              <span class="name-wrap" title="{{ row.name }}">{{ row.name }}</span>
+            </td>
+            <td>{{ row.client_brand or "—" }}</td>
+            <td>{{ row.agency_name or "—" }}</td>
+            <td>{{ row.payout_model or row.metric_type|upper }}</td>
+
+            <td>
+              {% if row.inventory is not none %}
+                {{ row.inventory }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+
+            <td>
+              {% if row.client_price is not none %}
+                {{ '%.4f'|format(row.client_price) }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+
+            <td>
+              {% if row.cats_avg_price is not none %}
+                {{ '%.4f'|format(row.cats_avg_price) }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+
+            {% for d in snapshot_dates %}
+              {% set cell = row.history.get(d) %}
+              <td>
+                {% if cell and cell["value"] is not none %}
+                  <span class="tag percent-tag {{ cell['class'] }}">
+                    {{ '%.2f'|format(cell["value"]) }}%
+                  </span>
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            {% endfor %}
+
+            <td>
+              <form class="comment-form"
+                    hx-post="/campaigns/margin/{{ row.booking_id }}/comment"
+                    hx-target="this"
+                    hx-swap="outerHTML"
+                    hx-trigger="change from:input, blur from:input">
+                <input type="hidden" name="month" value="{{ month_key }}">
+                <input class="input is-small"
+                       type="text"
+                       name="comment"
+                       value="{{ row.comment }}">
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  const monthKey = "{{ month_key }}";
+  const initialLabels = {{ chart_labels_json | safe }};
+  const initialValues = {{ chart_values_json | safe }};
+
+  let marginChart = null;
+
+  function buildMarginChart(labels, values){
+    const canvas = document.getElementById("marginChart");
+    if(!canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if(marginChart){
+      marginChart.destroy();
+      marginChart = null;
+    }
+
+    marginChart = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [{
+          label: "Средний % закупки",
+          data: values,
+          tension: 0.2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: true }
+        },
+        scales: {
+          y: {
+            ticks: {
+              callback: (v) => v + "%"
+            }
+          }
+        }
+      }
+    });
+
+    const pointsEl = document.getElementById("margin-chart-points");
+    if(pointsEl) pointsEl.textContent = (labels || []).length;
+  }
+
+  async function reloadMarginChart(){
+    const modelSel = document.getElementById("margin-filter-model");
+    const bookingSel = document.getElementById("margin-filter-booking");
+    const model = modelSel ? modelSel.value : "";
+    const bookingId = bookingSel ? bookingSel.value : "";
+
+    const params = new URLSearchParams();
+    params.set("month", monthKey);
+    if(model) params.set("metric_type", model);
+    if(bookingId) params.set("booking_id", bookingId);
+
+    const url = "/campaigns/margin/chart_data?" + params.toString();
+
+    try{
+      const resp = await fetch(url, { headers: { "accept": "application/json" } });
+      const data = await resp.json();
+      buildMarginChart(data.labels || [], data.values || []);
+    }catch(e){
+      console.error("margin chart fetch failed", e);
+    }
+  }
+
+  // expose for hx-on
+  window.reloadMarginChart = reloadMarginChart;
+
+  // init
+  buildMarginChart(initialLabels || [], initialValues || []);
+
+  // auto reload on filter change
+  const modelSel = document.getElementById("margin-filter-model");
+  const bookingSel = document.getElementById("margin-filter-booking");
+  if(modelSel) modelSel.addEventListener("change", reloadMarginChart);
+  if(bookingSel) bookingSel.addEventListener("change", reloadMarginChart);
+</script>
+
+{% endblock %}

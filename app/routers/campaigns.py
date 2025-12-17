@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Form
+from fastapi import APIRouter, Request, Form, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -15,11 +15,17 @@ from fastapi import APIRouter, Request, Body
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import text
 from app.database import engine
+import html
+from datetime import datetime
+import xml.etree.ElementTree as ET
 
 
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+
+
+
 
 # ------------------ утилиты ------------------
 
@@ -48,6 +54,104 @@ def _ensure_daily_tables():
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_rsd_date  ON raw_system_daily(date);"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_fd_date   ON fact_daily(date);"))
+
+def _parse_cats_shortage_xls(xml_bytes: bytes, metric_type: str) -> dict[int, float]:
+    """
+    Парсим SpreadsheetML (.xls) от Cats (shortage/campaigns/cpm|cpc)
+    и возвращаем словарь {campaign_id: avg_price}.
+
+    metric_type: "cpm" или "cpc".
+    """
+    ns = {"ss": "urn:schemas-microsoft-com:office:spreadsheet"}
+    root = ET.fromstring(xml_bytes)
+
+    ws = root.find(".//ss:Worksheet", ns)
+    if ws is None:
+        return {}
+
+    table = ws.find("ss:Table", ns)
+    if table is None:
+        return {}
+
+    rows = table.findall("ss:Row", ns)
+    if not rows:
+        return {}
+
+    def row_vals(row):
+        return [
+            (cell.find("ss:Data", ns).text
+             if cell.find("ss:Data", ns) is not None else None)
+            for cell in row.findall("ss:Cell", ns)
+        ]
+
+    header = row_vals(rows[0])
+    header_l = [(h or "").strip().lower() for h in header]
+
+    # ID кампании
+    try:
+        id_idx = header_l.index("id")
+    except ValueError:
+        id_idx = 0
+
+    # "Средний CPM, руб." / "Средний CPC, руб."
+    mt = metric_type.lower()
+    avg_idx = None
+    for i, h in enumerate(header_l):
+        if "средний" in h and mt in h:
+            avg_idx = i
+            break
+    if avg_idx is None:
+        for i, h in enumerate(header_l):
+            if mt in h:
+                avg_idx = i
+                break
+    if avg_idx is None:
+        raise RuntimeError(f"Не нашёл колонку со средним {metric_type} в Cats-отчёте: {header}")
+
+    def parse_num(x):
+        if x is None:
+            return None
+        s = str(x)
+        s = (
+            s.replace("\xa0", "")
+             .replace(" ", "")
+             .replace(",", ".")
+             .replace("руб.", "")
+             .replace("р.", "")
+             .strip()
+        )
+        if not s or s.lower() in ("nan", "none"):
+            return None
+        try:
+            return float(s)
+        except Exception:
+            return None
+
+    result: dict[int, float] = {}
+    for row in rows[1:]:
+        vals = row_vals(row)
+        if not any(vals):
+            continue
+        need_len = max(id_idx, avg_idx) + 1
+        if len(vals) < need_len:
+            vals += [None] * (need_len - len(vals))
+
+        cid_raw = vals[id_idx]
+        avg_raw = vals[avg_idx]
+
+        try:
+            cid = int(str(cid_raw).strip())
+        except Exception:
+            continue
+
+        avg_price = parse_num(avg_raw)
+        if avg_price is None:
+            continue
+
+        result[cid] = avg_price
+
+    return result
+
 
 def _sync_csv_daily_to_db(cid: int) -> int:
     """
@@ -837,7 +941,8 @@ def campaigns_daily5(cid: int):
         for rd, vis, br, pdpth, ats in cur_y.execute(
             "SELECT report_date, visits, bounce_rate, page_depth, avg_time_sec FROM yandex_daily_metrics WHERE campaign_id=?", (cid,)
         ):
-            ymap[str(rd)] = (vis, br, pdpth, ats)
+            br_pct = br * 100.0 if br is not None else None
+            ymap[str(rd)] = (vis, br_pct, pdpth, ats)
         con_y.close()
     except Exception:
         pass
@@ -1729,6 +1834,263 @@ def campaigns_daily5_save(cid: int, date: str = Form(...), metric: str = Form(..
         _save_override(cid, d_iso, metric, val_clean)
         edited = True
 
+    # ----- Маржинальность -----
+
+def _ensure_margin_table():
+    """
+    Таблицы для расчёта маржинальности по брони (история + актуальное).
+
+    1) margin_stats — "последнее значение" по каждому booking_id на месяц + комментарий:
+        booking_id        — ID строки в bookings
+        campaign_id       — ID кампании в Cats
+        month             — YYYY-MM-01 (первый день месяца, чтобы отличать периоды)
+        metric_type       — 'cpm' или 'cpc'
+        client_price      — клиентская цена (из Bookings), CPM или CPC
+        cats_avg_price    — средний CPM/CPC из shortage-выгрузки Cats
+        purchase_percent  — (cats_avg_price / client_price) * 100
+        comment           — комментарий в UI
+        updated_at        — ISO‑штамп
+
+    2) margin_snapshots — история "накопительным эффектом":
+        snapshot_date     — YYYY-MM-DD (дата выгрузки/апдейта)
+        Остальные поля — те же, что и в margin_stats, но с ключом (booking_id, month, snapshot_date)
+    """
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS margin_stats(
+                booking_id       INTEGER NOT NULL,
+                campaign_id      INTEGER,
+                month            TEXT    NOT NULL,
+                metric_type      TEXT    NOT NULL,
+                client_price     REAL,
+                cats_avg_price   REAL,
+                purchase_percent REAL,
+                comment          TEXT,
+                updated_at       TEXT,
+                PRIMARY KEY (booking_id, month)
+            );
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_margin_month    ON margin_stats(month);"))        
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_margin_campaign ON margin_stats(campaign_id);"))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS margin_snapshots(
+                booking_id       INTEGER NOT NULL,
+                campaign_id      INTEGER,
+                month            TEXT    NOT NULL,
+                snapshot_date    TEXT    NOT NULL,  -- YYYY-MM-DD
+                metric_type      TEXT    NOT NULL,  -- cpm/cpc
+                client_price     REAL,
+                cats_avg_price   REAL,
+                purchase_percent REAL,
+                updated_at       TEXT,
+                PRIMARY KEY (booking_id, month, snapshot_date)
+            );
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_margin_snap_month  ON margin_snapshots(month);"))        
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_margin_snap_date   ON margin_snapshots(snapshot_date);"))        
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_margin_snap_metric ON margin_snapshots(metric_type);"))
+
+def _purchase_percent_class(p) -> str:
+    """
+    Подбор цвета в UI:
+      <15%  — цвет яйца дрозда (голубой)
+      15–20 — зелёный
+      20–25 — жёлтый
+      >25   — ярко‑красный
+    """
+    try:
+        val = float(p)
+    except Exception:
+        return ""
+
+    if val < 15.0:
+        return "is-thrush"   # самое выгодное
+    if val < 20.0:
+        return "is-good"
+    if val <= 25.0:
+        return "is-warning"
+    return "is-bad"
+
+def _allow_margin_access(request: Request) -> bool:
+    """
+    Доступ к разделу маржинальности:
+      - если нет request.state.user/role — никого не режем (чтобы не ломать проект);
+      - если есть роли — пускаем только admin и traffic.
+    """
+    user = getattr(request.state, "user", None)
+    if not user:
+        return True  # нет системы пользователей — пускаем всех
+
+    role = getattr(user, "role", None) or getattr(user, "role_name", None)
+    if role is None:
+        return True
+
+    return str(role).lower() in ("admin", "traffic")
+
+def _parse_shortage_spreadsheet(xml_bytes: bytes, metric_type: str):
+    """
+    Парсим XML‑Excel с /statistics/shortage/campaigns/<cpc|cpm>/
+
+    Возвращает:
+      { campaign_id: {"name": "...", "avg_price": float}, ... }
+
+    Нас интересуют:
+      - колонка ID
+      - Название кампании
+      - Средний CPM, руб. / Средний CPC, руб.
+    """
+    ns = {"ss": "urn:schemas-microsoft-com:office:spreadsheet"}
+    try:
+        root = ET.fromstring(xml_bytes)
+    except Exception:
+        return {}
+
+    ws = root.find(".//ss:Worksheet", ns)
+    if ws is None:
+        return {}
+    table = ws.find("ss:Table", ns)
+    if table is None:
+        return {}
+
+    rows = table.findall("ss:Row", ns)
+    if not rows:
+        return {}
+
+    # шапка
+    header = []
+    for cell in rows[0].findall("ss:Cell", ns):
+        d = cell.find("ss:Data", ns)
+        header.append(d.text if d is not None else None)
+
+    def idx_of(title):
+        try:
+            return header.index(title)
+        except ValueError:
+            return -1
+
+    id_idx = idx_of("ID")
+    name_idx = idx_of("Название кампании")
+
+    target = "cpm" if metric_type.lower() == "cpm" else "cpc"
+    avg_idx = -1
+    for i, t in enumerate(header):
+        if not t:
+            continue
+        tl = t.lower()
+        if "средний" in tl and target in tl:
+            avg_idx = i
+            break
+
+    if id_idx < 0 or name_idx < 0 or avg_idx < 0:
+        return {}
+
+    out = {}
+
+    for r in rows[1:]:
+        vals = []
+
+        # учитываем ss:Index (пропуски колонок)
+        last = 0
+        for cell in r.findall("ss:Cell", ns):
+            idx_attr = cell.get("{%s}Index" % ns["ss"])
+            if idx_attr:
+                idx = int(idx_attr)
+                while len(vals) < idx - 1:
+                    vals.append(None)
+            d = cell.find("ss:Data", ns)
+            vals.append(d.text if d is not None else None)
+
+        need = max(id_idx, name_idx, avg_idx) + 1
+        if len(vals) < need:
+            vals += [None] * (need - len(vals))
+
+        cid_raw = vals[id_idx]
+        name = vals[name_idx] or ""
+        if not cid_raw:
+            continue
+
+        try:
+            cid = int(str(cid_raw).strip())
+        except Exception:
+            continue
+
+        name_clean = name.strip()
+        # убираем кампании, которые начинаются с Foxible
+        if name_clean.lower().startswith("foxible"):
+            continue
+
+        price_raw = vals[avg_idx]
+        if price_raw is None:
+            continue
+
+        s = str(price_raw)
+        s = s.replace("\xa0", "").replace(" ", "")
+        s = s.replace("руб.", "").replace("руб", "").replace("₽", "")
+        s = s.replace(",", ".").strip()
+        price = _to_float(s)
+        if price is None:
+            continue
+
+        out[cid] = {
+            "name": name_clean,
+            "avg_price": price,
+        }
+
+    return out
+
+def _fetch_shortage_map(metric_type: str, date_str_ddmmyyyy: str):
+    """
+    Выкачиваем выгрузку shortage из Cats для текущего месяца и парсим её.
+    metric_type: 'cpm' или 'cpc'
+    date_str_ddmmyyyy: '01.12.2025' (limit_date_begin)
+    """
+    syscfg = get_effective_system_config("config.yaml") or {}
+    base = (syscfg.get("connect_url") or syscfg.get("base_url") or "").rstrip("/")
+    if not base:
+        raise RuntimeError("No connect_url/base_url in system config")
+
+    s = _ensure_session()
+
+    if metric_type.lower() == "cpm":
+        export_url = (
+            f"{base}/statistics/shortage/campaigns/cpm/"
+            f"?days_finish_begin=&days_finish_end="
+            f"&limit_date_begin={date_str_ddmmyyyy}&limit_date_end="
+            f"&name=&campaign_id=&mediaplan_id=&agency_id=&advertiser_id=&manager_id="
+            f"&organization_id=4"
+            f"&status%5B0%5D=active&status%5B1%5D=blocked&status%5B2%5D=finished"
+            f"&payout_model%5B0%5D=cpm"
+            f"&export=xls"
+        )
+    else:
+        export_url = (
+            f"{base}/statistics/shortage/campaigns/cpc/"
+            f"?days_finish_begin=&days_finish_end="
+            f"&limit_date_begin={date_str_ddmmyyyy}&limit_date_end="
+            f"&name=&campaign_id=&mediaplan_id=&agency_id=&advertiser_id=&manager_id="
+            f"&organization_id=4"
+            f"&status%5B0%5D=active&status%5B1%5D=blocked&status%5B2%5D=finished"
+            f"&payout_model%5B0%5D=cpc&payout_model%5B1%5D=cpc_ic"
+            f"&export=xls"
+        )
+
+    r = s.get(export_url, timeout=120, allow_redirects=False)
+    loc = r.headers.get("Location", "")
+
+    if r.status_code in (301, 302, 303, 307, 308) and "home/login" in (loc or ""):
+        raise RuntimeError("Cats session expired: redirected to login")
+    if r.status_code != 200:
+        raise RuntimeError(f"Cats shortage export HTTP {r.status_code}")
+
+    head = r.content[:800].decode("utf-8", errors="ignore").lower()
+    if "<html" in head and "login" in head:
+        raise RuntimeError("Cats returned login page for shortage export")
+
+    return _parse_shortage_spreadsheet(r.content, metric_type)
+
+
+
     # ----- Cats -----
     p = Path("data") / "cats" / str(cid) / "latest_normalized.csv"
     df = pd.read_csv(p) if p.exists() else None
@@ -1842,7 +2204,8 @@ def campaigns_daily5_save(cid: int, date: str = Form(...), metric: str = Form(..
         for rd, vis, br, pdpth, ats in cur_y.execute(
             "SELECT report_date, visits, bounce_rate, page_depth, avg_time_sec FROM yandex_daily_metrics WHERE campaign_id=?", (cid,)
         ):
-            ymap[str(rd)] = (vis, br, pdpth, ats)
+            br_pct = br * 100.0 if br is not None else None
+            ymap[str(rd)] = (vis, br_pct, pdpth, ats)
         con_y.close()
     except Exception:
         pass
@@ -2126,7 +2489,11 @@ def campaigns_daily5_cell(cid: int, date: str, metric: str):
                                  FROM yandex_daily_metrics
                                 WHERE campaign_id=? AND report_date=?""", (cid, d_iso)).fetchone()
             con.close()
-            if r: y_vis, y_br, y_pd, y_ats = r
+            if r:
+                y_vis, y_br, y_pd, y_ats = r
+                # в БД bounce_rate как доля, переводим в проценты
+                if y_br is not None:
+                    y_br = float(y_br) * 100.0
         except Exception:
             pass
 
@@ -2222,6 +2589,589 @@ def campaigns_daily5_cell(cid: int, date: str, metric: str):
             current_txt = f"{v_sivt or 0:.2f}" if v_sivt is not None else ""
         else:
             current_txt = ""
+
+@router.get("/campaigns/margin", response_class=HTMLResponse)
+def campaigns_margin_view(request: Request):
+    """
+    Раздел 'Маржинальность' — сводка по брони за текущий месяц + история по дням.
+
+    Источник данных:
+      - client_price и модель закупки — из таблицы bookings
+      - средний CPM/CPC — из Cats shortage
+      - % закупки = (cats_avg_price / client_price) * 100
+
+    История:
+      - при каждом update_all сохраняем снимок в margin_snapshots (snapshot_date = дата апдейта)
+      - в UI показываем колонки вида "% (дата)"
+    """
+    import json
+
+    if not _allow_margin_access(request):
+        return HTMLResponse("Forbidden", status_code=403)
+
+    _ensure_margin_table()
+
+    today = date.today()
+    month_start = today.replace(day=1)
+    month_key = month_start.strftime("%Y-%m-01")
+
+    with engine.begin() as conn:
+        base_rows = conn.execute(text("""
+            SELECT
+                ms.booking_id,
+                ms.campaign_id,
+                ms.metric_type,
+                ms.client_price,
+                ms.cats_avg_price,
+                ms.purchase_percent,
+                ms.comment,
+                b.name,
+                b.client_brand,
+                b.agency_name,
+                b.payout_model,
+                b.inventory,
+                b.budget_before_vat
+            FROM margin_stats ms
+            JOIN bookings b ON b.id = ms.booking_id
+            WHERE ms.month = :month
+              AND (b.name IS NULL OR b.name NOT LIKE 'Foxible%')
+            ORDER BY b.name
+        """), {"month": month_key}).mappings().all()
+
+        # Какие даты снимков есть в БД за месяц (в порядке времени)
+        snapshot_dates = [
+            r[0] for r in conn.execute(text("""
+                SELECT DISTINCT snapshot_date
+                FROM margin_snapshots
+                WHERE month = :month
+                ORDER BY snapshot_date
+            """), {"month": month_key}).fetchall()
+            if r and r[0]
+        ]
+
+        # Снапшоты по всем букингам за месяц (для пивота в таблицу)
+        snap_rows = conn.execute(text("""
+            SELECT booking_id, snapshot_date, purchase_percent
+            FROM margin_snapshots
+            WHERE month = :month
+        """), {"month": month_key}).fetchall()
+
+        history_map: dict[int, dict[str, dict]] = {}
+        for bid, sdate, pp in snap_rows:
+            if bid is None or sdate is None:
+                continue
+            history_map.setdefault(int(bid), {})[str(sdate)] = {
+                "value": pp,
+                "class": _purchase_percent_class(pp),
+            }
+
+        latest_snapshot_date = snapshot_dates[-1] if snapshot_dates else None
+
+        avg_purchase_percent = None
+        if latest_snapshot_date:
+            v = conn.execute(text("""
+                SELECT AVG(purchase_percent)
+                FROM margin_snapshots
+                WHERE month = :month
+                  AND snapshot_date = :d
+                  AND purchase_percent IS NOT NULL
+            """), {"month": month_key, "d": latest_snapshot_date}).fetchone()
+            if v and v[0] is not None:
+                try:
+                    avg_purchase_percent = round(float(v[0]), 2)
+                except Exception:
+                    avg_purchase_percent = None
+
+        # Данные для стартового графика (без фильтров)
+        chart_rows = conn.execute(text("""
+            SELECT snapshot_date, AVG(purchase_percent) AS avg_pp
+            FROM margin_snapshots
+            WHERE month = :month
+              AND purchase_percent IS NOT NULL
+            GROUP BY snapshot_date
+            ORDER BY snapshot_date
+        """), {"month": month_key}).fetchall()
+
+    # Опции фильтра по РК (для графика)
+    booking_options = [
+        {
+            "booking_id": int(r["booking_id"]),
+            "name": (r.get("name") or f"Booking {int(r['booking_id'])}").strip(),
+            "metric_type": (r.get("metric_type") or "").lower(),
+        }
+        for r in base_rows
+    ]
+
+    # Строим rows для шаблона + цепляем историю
+    result_rows = []
+    for r in base_rows:
+        bid = int(r["booking_id"])
+        result_rows.append({
+            "booking_id":        bid,
+            "campaign_id":       r.get("campaign_id"),
+            "metric_type":       r.get("metric_type"),
+            "client_price":      r.get("client_price"),
+            "cats_avg_price":    r.get("cats_avg_price"),
+            "purchase_percent":  r.get("purchase_percent"),  # последнее (для совместимости)
+            "percent_class":     _purchase_percent_class(r.get("purchase_percent")),
+            "comment":           r.get("comment") or "",
+            "name":              r.get("name"),
+            "client_brand":      r.get("client_brand"),
+            "agency_name":       r.get("agency_name"),
+            "payout_model":      r.get("payout_model"),
+            "inventory":         r.get("inventory"),
+            "budget_before_vat": r.get("budget_before_vat"),
+            "history":           history_map.get(bid, {}),
+        })
+
+    chart_labels = [r[0] for r in chart_rows if r and r[0]]
+    chart_values = []
+    for r in chart_rows:
+        if not r:
+            continue
+        v = r[1]
+        if v is None:
+            chart_values.append(None)
+        else:
+            try:
+                chart_values.append(round(float(v), 2))
+            except Exception:
+                chart_values.append(None)
+
+    return templates.TemplateResponse(
+        "campaigns_margin.html",
+        {
+            "request": request,
+            "rows": result_rows,
+            "month_key": month_key,
+            "snapshot_dates": snapshot_dates,
+            "latest_snapshot_date": latest_snapshot_date,
+            "avg_purchase_percent": avg_purchase_percent,
+            "booking_options": booking_options,
+            "chart_labels_json": json.dumps(chart_labels, ensure_ascii=False),
+            "chart_values_json": json.dumps(chart_values, ensure_ascii=False),
+        },
+    )
+
+def _margin_update_all_core(snapshot_date: date | None = None) -> dict:
+    """
+    Внутренний апдейт маржинальности (без Request).
+
+    Делает две записи:
+      - margin_stats      (upsert): последнее значение за месяц
+      - margin_snapshots  (upsert): дневной снапшот (накопительная история)
+
+    snapshot_date:
+      - если None, берём date.today()
+      - используется и для подписи колонок, и для защиты от повторного авто-апдейта в течение дня
+    """
+    from fastapi import HTTPException
+    from sqlalchemy import text
+    from datetime import date as _date
+
+    _ensure_margin_table()
+
+    snap_date = snapshot_date or _date.today()
+    month_start = snap_date.replace(day=1)
+    limit_begin = month_start.strftime("%d.%m.%Y")   # 01.12.2025
+    month_key   = month_start.strftime("%Y-%m-01")   # 2025-12-01
+    snapshot_iso = snap_date.isoformat()               # 2025-12-17
+
+    # 1) Конфиг Cats
+    syscfg = get_effective_system_config("config.yaml") or {}
+    base_raw = (syscfg.get("connect_url") or syscfg.get("base_url") or "").strip().rstrip("/")
+    if not base_raw:
+        raise HTTPException(status_code=500, detail="No connect_url/base_url in system section")
+
+    # Cats UI живёт под /iface. Не допускаем /iface/iface
+    cats_base = base_raw
+    if not cats_base.endswith("/iface"):
+        cats_base = cats_base + "/iface"
+
+    # 2) Авторизованная сессия Cats
+    try:
+        s = _ensure_session()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cats auth failed: {e}") from e
+
+    # 3) Качаем и парсим CPM/CPC
+    def load_map(metric_type: str, payout_models: list[str]) -> dict[int, float]:
+        if metric_type not in ("cpm", "cpc"):
+            raise ValueError("metric_type must be 'cpm' or 'cpc'")
+
+        pm_qs = "&".join(
+            f"payout_model%5B{i}%5D={pm}"
+            for i, pm in enumerate(payout_models)
+        )
+
+        url = (
+            f"{cats_base}/statistics/shortage/campaigns/{metric_type}/"
+            f"?days_finish_begin=&days_finish_end="
+            f"&limit_date_begin={limit_begin}&limit_date_end="
+            f"&name=&campaign_id=&mediaplan_id=&agency_id=&advertiser_id="
+            f"&manager_id=&organization_id=4"
+            f"&status%5B0%5D=active&status%5B1%5D=blocked&status%5B2%5D=finished&"
+            f"{pm_qs}&export=xls"
+        )
+
+        r = s.get(url, timeout=120, allow_redirects=False)
+        loc = r.headers.get("Location", "")
+
+        if r.status_code in (301, 302, 303, 307, 308) and "home/login" in (loc or ""):
+            raise RuntimeError("Cats session expired: redirected to login")
+        if r.status_code != 200:
+            raise RuntimeError(f"Cats shortage export HTTP {r.status_code}")
+
+        # иногда приходит HTML логина с кодом 200
+        head = r.content[:800].decode("utf-8", errors="ignore").lower()
+        if "<html" in head and "login" in head:
+            raise RuntimeError("Cats returned login page for shortage export")
+
+        parsed = _parse_shortage_spreadsheet(r.content, metric_type)
+        if parsed:
+            return {
+                int(cid): float(row.get("avg_price"))
+                for cid, row in parsed.items()
+                if row and row.get("avg_price") is not None
+            }
+
+        # fallback (на случай другой шапки)
+        return _parse_cats_shortage_xls(r.content, metric_type)
+
+    try:
+        cpm_map = load_map("cpm", ["cpm"])
+        cpc_map = load_map("cpc", ["cpc", "cpc_ic"])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка выгрузки/парсинга Cats shortage XLS: {e}") from e
+
+    # {campaign_id: {"cpm": x, "cpc": y}}
+    stats: dict[int, dict[str, float]] = {}
+    for cid, v in (cpm_map or {}).items():
+        stats.setdefault(int(cid), {})["cpm"] = float(v)
+    for cid, v in (cpc_map or {}).items():
+        stats.setdefault(int(cid), {})["cpc"] = float(v)
+
+    updated = 0
+    skipped_no_stats = 0
+    skipped_unknown_model = 0
+
+    with engine.begin() as conn:
+        bookings = conn.execute(text("""
+            SELECT
+                id                       AS booking_id,
+                campaign_id              AS cats_id,
+                COALESCE(payout_model, buying_model) AS payout_model,
+                client_price,
+                name
+            FROM bookings
+            WHERE campaign_id IS NOT NULL
+        """)).mappings().all()
+
+        for b in bookings:
+            name = (b.get("name") or "").strip()
+            if name.lower().startswith("foxible"):
+                continue  # по ТЗ Foxible не считаем
+
+            cats_id = b.get("cats_id")
+            if cats_id is None:
+                continue
+
+            pm = (b.get("payout_model") or "").lower()
+
+            if "cpm" in pm:
+                metric_type = "cpm"
+            elif "cpc" in pm:
+                metric_type = "cpc"
+            else:
+                skipped_unknown_model += 1
+                continue
+
+            cats_price = stats.get(int(cats_id), {}).get(metric_type)
+            if cats_price is None:
+                skipped_no_stats += 1
+                continue
+
+            client_price = b.get("client_price")
+            purchase_percent = None
+            if client_price is not None:
+                try:
+                    cp = float(client_price)
+                    if cp > 0:
+                        purchase_percent = (float(cats_price) / cp) * 100.0
+                except Exception:
+                    purchase_percent = None
+
+            # 1) актуальное значение (для текущего UI)
+            conn.execute(text("""
+                INSERT INTO margin_stats(
+                    booking_id, campaign_id, month, metric_type,
+                    client_price, cats_avg_price, purchase_percent, updated_at
+                )
+                VALUES (:booking_id, :campaign_id, :month, :metric_type,
+                        :client_price, :cats_avg_price, :purchase_percent,
+                        datetime('now'))
+                ON CONFLICT(booking_id, month) DO UPDATE SET
+                    campaign_id      = excluded.campaign_id,
+                    metric_type      = excluded.metric_type,
+                    client_price     = excluded.client_price,
+                    cats_avg_price   = excluded.cats_avg_price,
+                    purchase_percent = excluded.purchase_percent,
+                    updated_at       = datetime('now')
+            """), {
+                "booking_id": int(b["booking_id"]),
+                "campaign_id": int(cats_id),
+                "month": month_key,
+                "metric_type": metric_type,
+                "client_price": client_price,
+                "cats_avg_price": float(cats_price),
+                "purchase_percent": purchase_percent,
+            })
+
+            # 2) дневной снимок (накопительная история)
+            conn.execute(text("""
+                INSERT INTO margin_snapshots(
+                    booking_id, campaign_id, month, snapshot_date, metric_type,
+                    client_price, cats_avg_price, purchase_percent, updated_at
+                )
+                VALUES (:booking_id, :campaign_id, :month, :snapshot_date, :metric_type,
+                        :client_price, :cats_avg_price, :purchase_percent,
+                        datetime('now'))
+                ON CONFLICT(booking_id, month, snapshot_date) DO UPDATE SET
+                    campaign_id      = excluded.campaign_id,
+                    metric_type      = excluded.metric_type,
+                    client_price     = excluded.client_price,
+                    cats_avg_price   = excluded.cats_avg_price,
+                    purchase_percent = excluded.purchase_percent,
+                    updated_at       = datetime('now')
+            """), {
+                "booking_id": int(b["booking_id"]),
+                "campaign_id": int(cats_id),
+                "month": month_key,
+                "snapshot_date": snapshot_iso,
+                "metric_type": metric_type,
+                "client_price": client_price,
+                "cats_avg_price": float(cats_price),
+                "purchase_percent": purchase_percent,
+            })
+
+            updated += 1
+
+    return {
+        "status": "ok",
+        "month": month_key,
+        "snapshot_date": snapshot_iso,
+        "updated": updated,
+        "skipped_no_stats": skipped_no_stats,
+        "skipped_unknown_model": skipped_unknown_model,
+    }
+
+
+@router.post("/campaigns/margin/update_all")
+def campaigns_margin_update_all(request: Request):
+    """
+    Ручной апдейт (кнопка Update All) — сохраняет:
+      - последнее значение в margin_stats
+      - дневной снапшот в margin_snapshots (колонка % (дата))
+
+    Важно:
+      - Foxible-* отбрасываем
+      - purchase_percent считаем в ПРОЦЕНТАХ: (cats_avg_price / client_price) * 100
+    """
+    from fastapi import HTTPException
+
+    if not _allow_margin_access(request):
+        return HTMLResponse("Forbidden", status_code=403)
+
+    try:
+        res = _margin_update_all_core()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # Если вызвали через HTMX (кнопка) — вернём компактный HTML‑статус
+    if (request.headers.get("HX-Request") or "").lower() == "true":
+        html_status = (
+            f"<span class='tag is-light'>OK · {html.escape(res.get('snapshot_date',''))} · "
+            f"updated: <strong>{res.get('updated')}</strong> · "
+            f"no stats: {res.get('skipped_no_stats')} · "
+            f"unknown model: {res.get('skipped_unknown_model')}</span>"
+        )
+        return HTMLResponse(html_status)
+
+    return JSONResponse(res)
+
+
+@router.get("/campaigns/margin/chart_data", response_class=JSONResponse)
+def campaigns_margin_chart_data(
+    request: Request,
+    month: str | None = None,
+    metric_type: str | None = None,
+    booking_id: int | None = None,
+):
+    """
+    Данные для графика (line chart): средний % закупки по дням.
+    Фильтры:
+      - metric_type: 'cpm' / 'cpc' / None (все)
+      - booking_id: конкретная РК (booking_id) / None (все)
+    """
+    if not _allow_margin_access(request):
+        return JSONResponse({"detail": "Forbidden"}, status_code=403)
+
+    _ensure_margin_table()
+
+    month_key = (month or date.today().replace(day=1).strftime("%Y-%m-01")).strip()
+    mt = (metric_type or "").strip().lower()
+    if mt not in ("", "cpm", "cpc"):
+        mt = ""
+
+    q = """
+        SELECT snapshot_date, AVG(purchase_percent) AS avg_pp
+        FROM margin_snapshots
+        WHERE month = :month
+          AND purchase_percent IS NOT NULL
+    """
+    params: dict = {"month": month_key}
+
+    if mt:
+        q += " AND metric_type = :mt"
+        params["mt"] = mt
+
+    if booking_id is not None:
+        q += " AND booking_id = :bid"
+        params["bid"] = int(booking_id)
+
+    q += " GROUP BY snapshot_date ORDER BY snapshot_date"
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(q), params).fetchall()
+
+    labels = [r[0] for r in rows if r and r[0]]
+    values = []
+    for r in rows:
+        v = r[1] if r else None
+        if v is None:
+            values.append(None)
+        else:
+            try:
+                values.append(round(float(v), 2))
+            except Exception:
+                values.append(None)
+
+    return JSONResponse({
+        "month": month_key,
+        "metric_type": (mt or None),
+        "booking_id": booking_id,
+        "labels": labels,
+        "values": values,
+    })
+
+
+# ---- Авто-апдейт 1 раз в день (по умолчанию включён; можно выключить MARGIN_DAILY_AUTO=0) ----
+
+_MARGIN_DAILY_THREAD = None
+
+def _start_margin_daily_autoupdate():
+    """
+    Авто-апдейт: раз в день сохраняет дневной снапшот (если его ещё нет).
+
+    По умолчанию ВКЛЮЧЕНО.
+    Чтобы выключить (например, локально в dev):
+        export MARGIN_DAILY_AUTO=0
+
+    Как работает:
+      - раз в час проверяем, есть ли снапшот за сегодня в margin_snapshots
+      - если нет — запускаем _margin_update_all_core()
+    """
+    import threading
+    import time
+
+    global _MARGIN_DAILY_THREAD
+
+    flag = (os.getenv("MARGIN_DAILY_AUTO", "1") or "1").strip().lower()
+    if flag in ("0", "false", "no", "off"):
+        return
+
+    if _MARGIN_DAILY_THREAD is not None and _MARGIN_DAILY_THREAD.is_alive():
+        return
+
+    def worker():
+        while True:
+            try:
+                _ensure_margin_table()
+                today = date.today()
+                month_key = today.replace(day=1).strftime("%Y-%m-01")
+                snap = today.isoformat()
+
+                with engine.begin() as conn:
+                    exists = conn.execute(
+                        text("SELECT 1 FROM margin_snapshots WHERE month=:m AND snapshot_date=:d LIMIT 1"),
+                        {"m": month_key, "d": snap},
+                    ).fetchone()
+
+                if not exists:
+                    _margin_update_all_core(snapshot_date=today)
+
+            except Exception as e:
+                # чтобы не падал процесс, просто логируем в stdout
+                print(f"[margin] daily autoupdate error: {e}")
+
+            time.sleep(60 * 60)  # 1 раз в час
+
+    _MARGIN_DAILY_THREAD = threading.Thread(
+        target=worker,
+        name="margin-daily-autoupdate",
+        daemon=True,
+    )
+    _MARGIN_DAILY_THREAD.start()
+
+
+@router.on_event("startup")
+def _margin_autoupdate_startup():
+    _start_margin_daily_autoupdate()
+
+@router.post("/campaigns/margin/{booking_id}/comment", response_class=HTMLResponse)
+def campaigns_margin_comment(
+    booking_id: int,
+    request: Request,
+    month: str = Form(...),
+    comment: str = Form(""),
+):
+    """
+    Обновление поля 'Комментарий' справа от каждой РК.
+    Комментарий хранится в margin_stats.comment (по booking_id + month).
+    """
+    if not _allow_margin_access(request):
+        return HTMLResponse("Forbidden", status_code=403)
+
+    _ensure_margin_table()
+
+    month_key = (month or "").strip()
+    if not month_key:
+        month_key = date.today().replace(day=1).strftime("%Y-%m-%d")
+
+    value = comment.strip() or None
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            UPDATE margin_stats
+               SET comment = :comment
+             WHERE booking_id = :bid AND month = :month
+        """), {"comment": value, "bid": booking_id, "month": month_key})
+
+    safe_val = html.escape(comment.strip(), quote=True)
+
+    # Возвращаем тот же <form> (для hx-swap="outerHTML")
+    html_form = (
+        f"<form hx-post='/campaigns/margin/{booking_id}/comment' "
+        f"      hx-target='this' hx-swap='outerHTML' "
+        f"      hx-trigger='change from:input, blur from:input'>"
+        f"  <input type='hidden' name='month' value='{month_key}' />"
+        f"  <input class='input is-small' type='text' name='comment' value='{safe_val}' />"
+        f"</form>"
+    )
+
+    return HTMLResponse(html_form)
+
+
 
     # ВАЖНО: глушим нативный submit (иначе возможна полная перезагрузка страницы)
     html = (

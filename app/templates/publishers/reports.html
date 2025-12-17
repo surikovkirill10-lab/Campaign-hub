@@ -1,0 +1,39 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Отчёты по виджету</h1>
+
+<form method="get" class="form-inline">
+  <label>С даты:
+    <input type="date" name="date_from" value="{{ date_from or '' }}">
+  </label>
+  <label>По дату:
+    <input type="date" name="date_to" value="{{ date_to or '' }}">
+  </label>
+  <button type="submit">Применить</button>
+</form>
+
+<h2>Сводка по сайтам</h2>
+<table class="table">
+  <thead>
+    <tr>
+      <th>Сайт</th>
+      <th>Сессий</th>
+      <th>Просмотров (view_start)</th>
+      <th>Полных досмотров (complete)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in report %}
+    <tr>
+      <td>{{ row.domain }}</td>
+      <td>{{ row.sessions }}</td>
+      <td>{{ row.views }}</td>
+      <td>{{ row.completes }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<p><a href="{{ request.url_for('publisher_dashboard') }}">&larr; Дашборд</a></p>
+{% endblock %}

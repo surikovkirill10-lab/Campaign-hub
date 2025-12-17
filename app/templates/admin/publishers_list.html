@@ -1,0 +1,117 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<style>
+  :root{
+    --nav-min: 180px;
+    --navW: max(10vw, var(--nav-min));
+    --topbar-h: 72px;
+  }
+
+  .cmpx-nav{
+    position: fixed;
+    left:0; top:0; bottom:0;
+    width: var(--navW);
+    background:#303030; color:#fff;
+    padding: calc(var(--topbar-h) + 8px) .5rem .75rem;
+    z-index: 20;
+  }
+  .cmpx-nav h3{
+    color:#fff; font-size:.85rem; text-transform:uppercase;
+    opacity:.8; margin:.25rem .75rem;
+  }
+  .cmpx-nav a{
+    color:#fff; display:block;
+    padding:.5rem .75rem; border-radius:4px;
+    text-decoration:none; font-weight:500; margin-bottom:.25rem;
+  }
+  .cmpx-nav a.is-active{
+    color:#00cccc; background:rgba(255,255,255,.08);
+  }
+
+  .cmpx-main{
+    margin-left: var(--navW);
+    padding: 10px 16px 24px;
+    box-sizing: border-box;
+  }
+</style>
+
+<div class="cmpx-layout">
+  <!-- Левое меню админки (как в users.html) -->
+  <aside class="cmpx-nav">
+    <h3>Admin</h3>
+    <a href="/logs" class="{% if request.url.path.startswith('/logs') %}is-active{% endif %}">Logs</a>
+    <a href="/settings" class="{% if request.url.path.startswith('/settings') %}is-active{% endif %}">Settings</a>
+    <a href="/dataflow" class="{% if request.url.path.startswith('/dataflow') %}is-active{% endif %}">Data Flow</a>
+    <a href="/admin/users" class="{% if request.url.path.startswith('/admin/users') %}is-active{% endif %}">Users &amp; Access</a>
+    <a href="/admin/publishers" class="{% if request.url.path.startswith('/admin/publishers') %}is-active{% endif %}">Издатели</a>
+  </aside>
+
+  <main class="cmpx-main">
+    <section class="section">
+      <div class="level">
+        <div class="level-left">
+          <h1 class="title is-4">Издатели</h1>
+        </div>
+        <div class="level-right">
+          <a href="{{ url_for('admin_new_publisher') }}" class="button is-link is-small">
+            + Добавить издателя
+          </a>
+        </div>
+      </div>
+
+      <div class="box">
+        {% if publishers %}
+          <table class="table is-fullwidth is-striped is-narrow">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Название</th>
+                <th>Логин</th>
+                <th>Email</th>
+                <th>Активен</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for p in publishers %}
+              <tr>
+                <td>{{ p.publisher_id }}</td>
+                <td>{{ p.publisher_name }}</td>
+                <td>
+                  {% if p.user_login %}
+                    <code>{{ p.user_login }}</code>
+                    <span class="is-size-7 has-text-grey"> (user_id={{ p.user_id }})</span>
+                  {% else %}
+                    <span class="has-text-grey is-size-7">—</span>
+                  {% endif %}
+                </td>
+                <td>{{ p.publisher_email or "" }}</td>
+                <td>
+                  {% if p.publisher_is_active and p.user_is_active %}
+                    <span class="tag is-success is-light is-size-7">ON</span>
+                  {% else %}
+                    <span class="tag is-light is-size-7">OFF</span>
+                  {% endif %}
+                </td>
+                <td class="has-text-right">
+                  <a href="{{ url_for('admin_publisher_sites', publisher_id=p.publisher_id) }}"
+                     class="button is-small is-text">
+                    Сайты
+                  </a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="has-text-grey">
+            Пока нет ни одного издателя.
+          </p>
+        {% endif %}
+      </div>
+    </section>
+  </main>
+</div>
+
+{% endblock %}

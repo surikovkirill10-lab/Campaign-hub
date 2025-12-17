@@ -9,6 +9,7 @@ from .cats_export import router as cats_export_router
 from .debug import router as debug_router
 from .verifier import router as verifier_router
 from .bookings import router as bookings_router
+from .sales import router as sales_router
 
 __all__ = [
     "campaigns_router",
@@ -19,6 +20,7 @@ __all__ = [
     "debug_router",
     "verifier_router",
     "bookings_router",
+    "sales_router",
 ]
 
 # --- bookings router ---

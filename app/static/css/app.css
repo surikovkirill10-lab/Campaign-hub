@@ -10,8 +10,17 @@
   --container-max: 1216px;   /* тот же максимум, что у основного .container */
   --container-pad: 24px;     /* горизонтальный внутренний отступ контейнера */
 }
-.topbar{position:sticky;top:0;left:0;right:0;z-index:1000;background:var(--nav-bg);border-bottom:1px solid #222;}
-.topbar .wrap{
+
+.topbar{
+   position: fixed;
+   top: 0;
+   left: 0;
+   right: 0;
+   z-index: 1000;
+   background: var(--nav-bg);
+   border-bottom: 1px solid #222;
+ }
+ .topbar .wrap{
   max-width: var(--container-max);
   margin: 0 auto;
   padding: 10px var(--container-pad);
@@ -48,7 +57,10 @@
 .topnav a:hover{color:var(--nav-text-hover);background:var(--nav-bg-hover);}
 .topnav a:active{transform:translateY(1px)}
 .topnav a.active{background:var(--nav-active-bg);color:var(--nav-active-text);font-weight:700;}
-.page-shell{padding-top:10px;}
+.page-shell{
+  /* высота шапки + небольшой зазор */
+   padding-top: calc(var(--topbar-h, 56px) + 12px);
+ }
 @media (max-width:640px){.topbar .wrap{
   max-width: var(--container-max);
   margin: 0 auto;

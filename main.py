@@ -2,10 +2,14 @@
 from fastapi import FastAPI, Depends
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.logging_setup import setup_logging
 from app.database import engine
 from app import models
+from app.routers import widget_public, publisher_widget
+from app.routers import publishers_admin
+
 
 # агрегированные роутеры
 from app.routers import (
@@ -15,6 +19,7 @@ from app.routers import (
     cats_export_router,
     data_flow_router,
     verifier_router,
+    sales_router,
 )
 
 # отдельные роутеры
@@ -26,6 +31,8 @@ from app.routers.imap_ping import router as imap_ping_router
 from app.routers.logs import router as logs_router
 from app.routers.bookings import router as bookings_router
 from app.routers.admin_users import router as admin_users_router
+
+
 
 from auth import setup_auth, require_module
 
@@ -160,6 +167,11 @@ app.include_router(
     dependencies=[Depends(require_module("settings", "view"))],
 )
 
+# --- Sales ---
+app.include_router(
+    sales_router,
+    dependencies=[Depends(require_module("sales", "view"))],
+)
 
 # === ОТДЕЛЬНЫЕ PATH'ы ДЛЯ IMAP FOLDERS ===
 # Делаем их тоже частью модуля "settings", чтобы они не были открыты наружу.
@@ -178,10 +190,21 @@ app.add_api_route(
     response_class=HTMLResponse,
     dependencies=[Depends(require_module("settings", "view"))],
 )
-
+app.include_router(widget_public.router)
+app.include_router(publisher_widget.router)
+app.include_router(publishers_admin.router)
 
 # === ЛОКАЛЬНЫЙ ЗАПУСК (по желанию) ===
 if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # при желании ограничишь своими доменами
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)

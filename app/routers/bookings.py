@@ -94,7 +94,11 @@ def _select_fragments(cam_cols: set[str]) -> str:
     """
     base = [
         "b.id", "b.name",
-        "b.campaign_id", "b.start_date", "b.end_date",
+        "b.campaign_id", "b.start_date", "b.end_date", 
+
+        # Новая колонка — клиенсткая цена
+        "b.client_price",
+
         "b.budget_client_net", "b.inventory_total_plan", "b.inventory_fact",
         "b.vz_percent", "b.sales_manager",
         "b.brand",
@@ -318,7 +322,11 @@ async def import_excel(request: Request, file: UploadFile = File(...), sheet: st
             "buying_model": (str(get_cell(r, "Модель закупки", "Buying model", "Модель")).strip() or None) if get_cell(r, "Модель закупки", "Buying model", "Модель") is not None else None,
             "vz_percent": coerce_percent(get_cell(r, "ВЗ%", "Б3%", "СК", "CK")),
             "month_str": str(get_cell(r, "Месяц размещения")) if get_cell(r, "Месяц размещения") is not None else None,
-            "raw_json": json.dumps({c: (None if pd.isna(r[c]) else r[c]) for c in df.columns}, ensure_ascii=False),
+            "raw_json": json.dumps(
+{c: (None if pd.isna(r[c]) else r[c]) for c in df.columns},
+    ensure_ascii=False,
+    default=str,   # <‑‑ вот эта строчка важна
+),
         }
 
         try:
@@ -447,6 +455,7 @@ def patch_booking(request: Request, booking_id: int, field: str = Form(...), val
         "agency_name",   # -> обновим agency_id по названию
         "client_name",   # -> обновим client_id по названию
         "client_brand",  # алиас к brand
+        "client_price",
     }
 
     if field not in allowed:
@@ -488,7 +497,7 @@ def patch_booking(request: Request, booking_id: int, field: str = Form(...), val
         "budget_after_vat","budget_client_net","budget_client_gross","budget_after_sk",
         "inventory_total_plan","inventory_fact","inventory_commercial","inventory_bonus",
         "price_unit","price_unit_with_bonus","price_unit_with_vat","cpm_cpc_to_platform",
-        "vz_percent","refund_amount"
+        "vz_percent","refund_amount", "client_price",
     }:
         coerced = to_float(value)
         if field == "vz_percent" and coerced is not None and abs(coerced) > 1:
@@ -681,3 +690,34 @@ def delete_screenshot(request: Request, booking_id: int, shot_id: int):
     return templates.TemplateResponse("partials/_screenshots.html",
                                       {"request": request, "b": b, "camp": {"id": campaign_id}, "shots": shots})
 
+@router.post("/{booking_id}/delete", response_class=HTMLResponse)
+def delete_booking(booking_id: int):
+    """
+    Удаление строки из bookings (и связанных KPI, если таблица есть).
+    Используется из bookings_row.html:
+      hx-post="/bookings/{{ row.id }}/delete"
+      hx-target="#booking-{{ row.id }}"
+      hx-swap="outerHTML"
+    """
+    conn = get_db()
+    cur = conn.cursor()
+
+    # try: почистить KPI, если таблица существует
+    try:
+        cur.execute("DELETE FROM booking_kpis WHERE booking_id=?", (booking_id,))
+    except sqlite3.OperationalError:
+        # таблицы может не быть — просто игнорируем
+        pass
+
+    # при желании можно так же почистить margin_stats и прочие связанные таблицы
+    try:
+        cur.execute("DELETE FROM margin_stats WHERE booking_id=?", (booking_id,))
+    except sqlite3.OperationalError:
+        pass
+
+    # основная запись
+    cur.execute("DELETE FROM bookings WHERE id=?", (booking_id,))
+    conn.commit()
+
+    # для htmx hx-swap="outerHTML" достаточно вернуть пустой HTML
+    return HTMLResponse("")

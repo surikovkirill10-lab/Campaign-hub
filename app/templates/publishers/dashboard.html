@@ -1,0 +1,18 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Видео‑виджет: дашборд</h1>
+
+<p>Издатель: {{ publisher.name }}</p>
+
+<ul>
+  <li>Всего сессий: {{ metrics.total_sessions }}</li>
+  <li>Всего событий: {{ metrics.total_events }}</li>
+  <li>Сессий за 7 дней: {{ metrics.last7_sessions }}</li>
+</ul>
+
+<p>
+  <a href="{{ request.url_for('publisher_sites') }}">Мои сайты</a> |
+  <a href="{{ request.url_for('publisher_reports') }}">Отчёты</a>
+</p>
+{% endblock %}

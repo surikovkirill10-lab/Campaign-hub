@@ -1,0 +1,79 @@
+{% extends "Sales.html" %}
+
+{% block sales_content %}
+  <h1 class="title is-4">AI media planner · Считалка</h1>
+
+  <p class="mb-3">
+    Вставь бриф клиента в поле ниже, выбери режим расчёта
+    (<strong>максимальная ёмкость</strong> или
+    <strong>фиксированный бюджет</strong>) и нажми
+    <strong>«Рассчитать»</strong>. Сначала появится превью нормализованного
+    брифа и медиаплана, потом можно будет скачать Excel по шаблону
+    Innovation Lab.
+  </p>
+
+    <form id="sales-calc-form"
+        method="post"
+        action="/sales/calc/preview"
+        hx-post="/sales/calc/preview"
+        hx-target="#calc-result"
+        hx-swap="innerHTML"
+        hx-indicator="#calc-progress">
+
+
+    <div class="field">
+      <label class="label is-small">Бриф клиента</label>
+      <div class="control">
+        <textarea class="textarea" name="brief" rows="16"
+                  placeholder="Вставь сюда бриф клиента…"></textarea>
+      </div>
+    </div>
+
+    <div class="field mt-3">
+      <label class="label is-small">Режим расчёта</label>
+      <div class="control">
+        <label class="radio mr-3">
+          <input type="radio" name="mode" value="capacity" checked>
+          Максимальная ёмкость (capacity)
+        </label>
+        <label class="radio">
+          <input type="radio" name="mode" value="budget">
+          Фиксированный бюджет
+        </label>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="label is-small">
+        Бюджет, ₽ (используется в режиме «Фиксированный бюджет»)
+      </label>
+      <div class="control">
+        <input class="input is-small"
+               type="number"
+               name="budget"
+               min="0"
+               step="1000"
+               placeholder="Например, 1500000">
+      </div>
+    </div>
+
+    <div class="field mt-3">
+      <div class="control">
+        <button class="button is-link" type="submit">
+          Рассчитать
+        </button>
+      </div>
+    </div>
+
+    <div id="calc-progress" class="htmx-indicator">
+      <progress class="progress is-small" max="100">50%</progress>
+    </div>
+  </form>
+
+  <div id="calc-result" class="mt-4">
+    {# если пришли parsed/rows – показываем превью и при обычном POST #}
+    {% if parsed is defined %}
+      {% include "sales_calc_result.html" %}
+    {% endif %}
+  </div>
+{% endblock %}

@@ -1,0 +1,89 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<style>
+  :root{
+    --nav-min: 180px;
+    --navW: max(10vw, var(--nav-min));
+    --topbar-h: 72px;
+  }
+  html, body { overflow-x: hidden; }
+
+  .cmpx-nav{
+    position: fixed;
+    left:0; top:0; bottom:0;
+    width:var(--navW);
+    background:#303030; color:#fff;
+    padding: calc(var(--topbar-h) + 8px) .5rem .75rem;
+    z-index: 20;
+  }
+  .cmpx-nav h3{
+    color:#fff; font-size:.85rem;
+    text-transform:uppercase;
+    opacity:.8;
+    margin:.25rem .75rem;
+  }
+  .cmpx-nav a{
+    color:#fff;
+    display:block;
+    padding:.5rem .75rem;
+    border-radius:4px;
+    text-decoration:none;
+    font-weight:500;
+    margin-bottom:.25rem;
+  }
+  .cmpx-nav a.is-active{
+    color:#00cccc;
+    background:rgba(255,255,255,.08);
+  }
+
+  .cmpx-main{
+    margin-left:var(--navW);
+    width: calc(90vw - var(--navW));
+    padding: 5px;
+    box-sizing:border-box;
+    overflow-x:hidden;
+  }
+  .cmpx-main .section,
+  .cmpx-main .container{
+    max-width:none !important;
+    width:100% !important;
+    padding:0 !important;
+    margin:0 !important;
+    box-sizing:border-box;
+  }
+
+  .sales-content{
+    padding: 1.5rem;
+  }
+</style>
+
+<div class="cmpx-layout">
+  <aside class="cmpx-nav">
+    <h3>Sales</h3>
+
+    <a href="/sales/calc"
+       class="{{ 'is-active' if active_sales_tab == 'calc' else '' }}">
+      Считалка
+    </a>
+    <a href="/sales/computations"
+       class="{{ 'is-active' if active_sales_tab == 'computations' else '' }}">
+      Расчеты
+    </a>
+    <a href="/sales/summary"
+       class="{{ 'is-active' if active_sales_tab == 'summary' else '' }}">
+      Свод
+    </a>
+  </aside>
+
+  <main class="cmpx-main">
+    <section class="sales-content">
+      {% block sales_content %}
+        <h1 class="title is-4">Sales</h1>
+        <p>Выберите раздел в меню слева.</p>
+      {% endblock %}
+    </section>
+  </main>
+</div>
+
+{% endblock %}

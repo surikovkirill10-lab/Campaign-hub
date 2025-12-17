@@ -1,0 +1,134 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<style>
+  :root{
+    --nav-min: 180px;
+    --navW: max(10vw, var(--nav-min));
+    --topbar-h: 72px;
+  }
+
+  .cmpx-nav{
+    position: fixed;
+    left:0; top:0; bottom:0;
+    width: var(--navW);
+    background:#303030; color:#fff;
+    padding: calc(var(--topbar-h) + 8px) .5rem .75rem;
+    z-index: 20;
+  }
+  .cmpx-nav h3{
+    color:#fff; font-size:.85rem; text-transform:uppercase;
+    opacity:.8; margin:.25rem .75rem;
+  }
+  .cmpx-nav a{
+    color:#fff; display:block;
+    padding:.5rem .75rem; border-radius:4px;
+    text-decoration:none; font-weight:500; margin-bottom:.25rem;
+  }
+  .cmpx-nav a.is-active{
+    color:#00cccc; background:rgba(255,255,255,.08);
+  }
+
+  .cmpx-main{
+    margin-left: var(--navW);
+    padding: 10px 16px 24px;
+    box-sizing: border-box;
+  }
+</style>
+
+<div class="cmpx-layout">
+  <aside class="cmpx-nav">
+    <h3>Admin</h3>
+    <a href="/logs" class="{% if request.url.path.startswith('/logs') %}is-active{% endif %}">Logs</a>
+    <a href="/settings" class="{% if request.url.path.startswith('/settings') %}is-active{% endif %}">Settings</a>
+    <a href="/dataflow" class="{% if request.url.path.startswith('/dataflow') %}is-active{% endif %}">Data Flow</a>
+    <a href="/admin/users" class="{% if request.url.path.startswith('/admin/users') %}is-active{% endif %}">Users &amp; Access</a>
+    <a href="/admin/publishers" class="{% if request.url.path.startswith('/admin/publishers') %}is-active{% endif %}">Издатели</a>
+  </aside>
+
+  <main class="cmpx-main">
+    <section class="section">
+      <div class="level">
+        <div class="level-left">
+          <h1 class="title is-4">Новый издатель</h1>
+        </div>
+        <div class="level-right">
+          <a href="{{ url_for('admin_publishers_list') }}" class="button is-light is-small">
+            Отмена
+          </a>
+        </div>
+      </div>
+
+      <div class="box" style="max-width: 520px;">
+        {% if error %}
+          <p class="has-text-danger mb-3">{{ error }}</p>
+        {% endif %}
+
+        <form method="post">
+          <div class="field">
+            <label class="label is-small">Название издателя</label>
+            <div class="control">
+              <input class="input is-small"
+                     type="text"
+                     name="name"
+                     value="{{ name or '' }}"
+                     required>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="label is-small">Контактный email</label>
+            <div class="control">
+              <input class="input is-small"
+                     type="email"
+                     name="contact_email"
+                     value="{{ contact_email or '' }}">
+            </div>
+          </div>
+
+          <hr>
+
+          <h2 class="subtitle is-6 has-text-weight-semibold">Учётка издателя</h2>
+
+          <div class="field">
+            <label class="label is-small">Логин пользователя (издателя)</label>
+            <div class="control">
+              <input class="input is-small"
+                     type="text"
+                     name="login"
+                     value="{{ login or '' }}"
+                     required>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="label is-small">Пароль</label>
+            <div class="control">
+              <input class="input is-small"
+                     type="text"
+                     name="password"
+                     required>
+            </div>
+          </div>
+
+          <p class="is-size-7 has-text-grey mb-3">
+            Будет создан пользователь с ролью <code>publisher</code> и привязан к этому издателю.
+          </p>
+
+          <div class="field">
+            <div class="control">
+              <button class="button is-link is-small" type="submit">
+                Создать
+              </button>
+              <a href="{{ url_for('admin_publishers_list') }}" class="button is-light is-small">
+                Отмена
+              </a>
+            </div>
+          </div>
+        </form>
+      </div>
+    </section>
+  </main>
+</div>
+
+{% endblock %}

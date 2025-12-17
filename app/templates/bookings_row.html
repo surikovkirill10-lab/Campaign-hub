@@ -123,6 +123,18 @@
     </div>
   </td>
 
+      <!-- Клиентская цена -->
+  <td class="has-text-right" style="min-width: 16ch;">
+    {{ inline_input(
+         row,
+         "client_price",
+         row.client_price is not none and '%.4f'|format(row.client_price) or '',
+         "text",
+         None,
+         "0"
+    ) }}
+  </td>
+
   <!-- Бюджет (до НДС) -->
   <td class="has-text-right" style="min-width: 16ch;">
     {{ inline_input(row, "budget_client_net", bud_net is not none and fmt_num(bud_net, 2) or '', "text", None, "0") }}

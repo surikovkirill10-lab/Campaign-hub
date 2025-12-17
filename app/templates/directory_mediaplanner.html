@@ -1,0 +1,185 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<style>
+  :root{
+    --nav-min: 180px;
+    --navW: max(10vw, var(--nav-min));
+    --topbar-h: 72px;
+  }
+  html, body { overflow-x: hidden; }
+
+  .cmpx-nav{
+    position: fixed;
+    left:0; top:0; bottom:0;
+    width:var(--navW);
+    background:#303030; color:#fff;
+    padding: calc(var(--topbar-h) + 8px) .5rem .75rem;
+    z-index: 20;
+  }
+  .cmpx-nav h3{
+    color:#fff; font-size:.85rem; text-transform:uppercase;
+    opacity:.8; margin:.25rem .75rem;
+  }
+  .cmpx-nav a{
+    color:#fff; display:block; padding:.5rem .75rem;
+    border-radius:4px; text-decoration:none;
+    font-weight:500; margin-bottom:.25rem;
+  }
+  .cmpx-nav a.is-active{
+    color:#00cccc;
+    background:rgba(255,255,255,.08);
+  }
+
+  .nav-directory-label{
+    font-size:.75rem;
+    text-transform:uppercase;
+    opacity:.6;
+    margin:.75rem .75rem .25rem;
+  }
+  .nav-directory a{
+    font-size:.9rem;
+    padding-left:1.4rem;
+  }
+
+  .cmpx-main{
+    margin-left:var(--navW);
+    width: calc(90vw - var(--navW));
+    padding: 5px;
+    box-sizing:border-box;
+    overflow-x:hidden;
+  }
+</style>
+
+<div class="cmpx-layout">
+  <aside class="cmpx-nav">
+    <h3>Menu</h3>
+    <a href="/campaigns">Campaigns</a>
+    <a href="/bookings">Брони</a>
+
+    <div class="nav-directory">
+      <div class="nav-directory-label">Directory</div>
+      <a href="/directory">
+        Почта / Verifier
+      </a>
+      <a href="/directory/mediaplanner" class="is-active">
+        Media planner
+      </a>
+    </div>
+  </aside>
+
+  <main class="cmpx-main">
+    <div class="block">
+      <h2 class="subtitle">Media planner · настройки</h2>
+      <p>Здесь хранится файл ёмкости, Excel‑шаблон медиаплана и ключи Яндекс LLM.</p>
+    </div>
+
+    <!-- Capacity -->
+    <div class="box mb-4">
+      <h3 class="title is-6">Файл ёмкости</h3>
+      <p class="mb-2">
+        Текущий путь:
+        <code>{{ mp.capacity_path or 'не задан' }}</code>
+      </p>
+
+      <form
+        hx-post="/directory/mediaplanner/upload_capacity"
+        hx-encoding="multipart/form-data"
+        hx-target="#capacity-status"
+        hx-swap="innerHTML">
+        <div class="field is-grouped">
+          <div class="control">
+            <input class="input is-small" type="file" name="file" accept=".xlsx,.xls">
+          </div>
+          <div class="control">
+            <button class="button is-small is-link" type="submit">
+              Загрузить новый файл
+            </button>
+          </div>
+        </div>
+      </form>
+      <div id="capacity-status" class="mt-2"></div>
+    </div>
+
+    <!-- Template -->
+    <div class="box mb-4">
+      <h3 class="title is-6">Шаблон медиаплана (Excel)</h3>
+      <p class="mb-2">
+        Текущий путь:
+        <code>{{ mp.template_path or 'не задан' }}</code>
+      </p>
+
+      <form
+        hx-post="/directory/mediaplanner/upload_template"
+        hx-encoding="multipart/form-data"
+        hx-target="#template-status"
+        hx-swap="innerHTML">
+        <div class="field is-grouped">
+          <div class="control">
+            <input class="input is-small" type="file" name="file" accept=".xlsx,.xls">
+          </div>
+          <div class="control">
+            <button class="button is-small is-link" type="submit">
+              Загрузить новый шаблон
+            </button>
+          </div>
+        </div>
+      </form>
+      <div id="template-status" class="mt-2"></div>
+    </div>
+
+    <!-- Yandex LLM -->
+    <div class="box">
+      <h3 class="title is-6">Настройки Яндекс LLM</h3>
+
+      <form
+        hx-post="/directory/mediaplanner/save_keys"
+        hx-target="#keys-status"
+        hx-swap="innerHTML">
+        <div class="field">
+          <label class="label is-small">API key</label>
+          <div class="control">
+            <input class="input is-small"
+                   type="password"
+                   name="api_key"
+                   placeholder="{% if mp.yandex_api_key %}*** ключ сохранён ***{% else %}вставь ключ{% endif %}">
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label is-small">Folder ID</label>
+          <div class="control">
+            <input class="input is-small"
+                   type="text"
+                   name="folder_id"
+                   value="{{ mp.yandex_folder_id or '' }}"
+                   placeholder="catalog / folder id">
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="label is-small">Endpoint</label>
+          <div class="control">
+            <input class="input is-small"
+                   type="text"
+                   name="endpoint"
+                   value="{{ mp.yandex_endpoint or '' }}"
+                   placeholder="https://llm.api.cloud.yandex.net/...">
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="control">
+            <button class="button is-small is-link" type="submit">
+              Сохранить
+            </button>
+          </div>
+        </div>
+      </form>
+
+      <div id="keys-status" class="mt-2"></div>
+    </div>
+  </main>
+</div>
+
+{% endblock %}

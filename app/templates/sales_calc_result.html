@@ -1,0 +1,181 @@
+{% if error %}
+  <article class="message is-danger">
+    <div class="message-header">
+      <p>Ошибка расчёта</p>
+    </div>
+    <div class="message-body">
+      {{ error }}
+    </div>
+  </article>
+{% else %}
+  {% if parsed %}
+    <form action="/sales/calc/export" method="post">
+      <div class="box">
+        <h2 class="title is-5">Нормализованный бриф (можно поправить)</h2>
+
+        <table class="table is-fullwidth is-striped is-narrow">
+          <tbody>
+            <tr>
+              <th style="width: 180px;">Агентство</th>
+              <td>
+                <input class="input is-small" type="text" name="agency" value="">
+              </td>
+            </tr>
+            <tr>
+              <th>Клиент</th>
+              <td>
+                <input class="input is-small" type="text" name="client" value="{{ parsed.client }}">
+              </td>
+            </tr>
+            <tr>
+              <th>Бренд</th>
+              <td>
+                <input class="input is-small" type="text" name="brand" value="{{ parsed.brand }}">
+              </td>
+            </tr>
+            <tr>
+              <th>Название кампании</th>
+              <td>
+                <input class="input is-small" type="text" name="campaign_name" value="{{ campaign_name }}">
+              </td>
+            </tr>
+            <tr>
+              <th>Менеджер</th>
+              <td>
+                <input class="input is-small" type="text" name="manager" value="">
+              </td>
+            </tr>
+            <tr>
+              <th>Подготовил</th>
+              <td>
+                <input class="input is-small" type="text" name="prepared_by" value="">
+              </td>
+            </tr>
+            <tr>
+              <th>Дата брифа</th>
+              <td>
+                <input class="input is-small"
+       type="date"
+       name="brief_date"
+       value="{{ brief_date.isoformat() if brief_date is defined and brief_date is not none else '' }}">
+
+              </td>
+            </tr>
+            <tr>
+              <th>Период</th>
+              <td>
+                <div class="field is-grouped is-align-items-center">
+                  <div class="control">
+                    <input class="input is-small"
+                           type="date"
+                           name="period_start"
+                           value="{{ parsed.period_start }}">
+                  </div>
+                  <div class="control">
+                    —
+                  </div>
+                  <div class="control">
+                    <input class="input is-small"
+                           type="date"
+                           name="period_end"
+                           value="{{ parsed.period_end }}">
+                  </div>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <th>Форматы</th>
+              <td>{{ parsed.formats|join(", ") }}</td>
+            </tr>
+            <tr>
+              <th>ГЕО</th>
+              <td>{{ parsed.geo|join(", ") }}</td>
+            </tr>
+            <tr>
+              <th>Возраст</th>
+              <td>{{ parsed.ages|join(", ") }}</td>
+            </tr>
+            <tr>
+              <th>Пол</th>
+              <td>{{ parsed.genders|join(", ") }}</td>
+            </tr>
+            <tr>
+              <th>Интересы</th>
+              <td>{{ parsed.interests|join(", ") }}</td>
+            </tr>
+            <tr>
+              <th>Цель / KPI</th>
+              <td>{{ parsed.goal or "—" }}</td>
+            </tr>
+            <tr>
+              <th>Частота</th>
+              <td>{{ parsed.frequency or "—" }}</td>
+            </tr>
+            <tr>
+              <th>Бюджет</th>
+              <td>
+                {% if user_budget is not none %}
+                  {{ "{:,.0f}".format(user_budget).replace(",", " ") }} ₽
+                {% elif parsed.budget %}
+                  {{ "{:,.0f}".format(parsed.budget).replace(",", " ") }} ₽
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="box mt-4">
+        <h2 class="title is-5">Предварительный медиаплан</h2>
+
+        {% if rows %}
+          <table class="table is-fullwidth is-striped is-narrow">
+            <thead>
+              <tr>
+                <th>Площадка</th>
+                <th>Позиция</th>
+                <th>ГЕО</th>
+                <th>Девайс</th>
+                <th>Период с</th>
+                <th>Период по</th>
+                <th>Показы (план)</th>
+                <th>Бюджет, ₽</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in rows %}
+                <tr>
+                  <td>Innovation Lab</td>
+                  <td>{{ r.format_name }}</td>
+                  <td>{{ r.geo_name }}</td>
+                  <td>{{ r.device }}</td>
+                  <td>{{ r.period_start }}</td>
+                  <td>{{ r.period_end }}</td>
+                  <td>{{ r.plan_imps }}</td>
+                  <td>{{ "{:,.0f}".format(r.budget).replace(",", " ") }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+
+          <div class="field mt-3">
+            <button class="button is-link" type="submit">
+              Скачать Excel
+            </button>
+          </div>
+        {% else %}
+          <p>Расчёт не вернул строк медиаплана.</p>
+        {% endif %}
+      </div>
+
+      <!-- обязательные скрытые поля для экспорта -->
+      <input type="hidden" name="brief" value="{{ parsed.raw_text|e }}">
+      <input type="hidden" name="mode" value="{{ mode }}">
+      {% if user_budget is not none %}
+        <input type="hidden" name="budget" value="{{ user_budget }}">
+      {% endif %}
+    </form>
+  {% endif %}
+{% endif %}

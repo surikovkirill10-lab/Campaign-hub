@@ -1,0 +1,53 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1>Сайт {{ site.name }}</h1>
+
+<p>Домен: {{ site.domain }}</p>
+<p>Публичный token: <code>{{ site.public_token }}</code></p>
+
+<h2>Код вставки виджета</h2>
+
+<p>Вставьте этот код в HTML страницы на стороне сайта:</p>
+
+<pre><code>&lt;div id="yadro-widget"&gt;&lt;/div&gt;
+&lt;script
+  src="{{ request.base_url }}static/widget/widget.js"
+  data-site-token="{{ site.public_token }}"
+  data-article-id="{{ '{ARTICLE_ID}' }}"
+  async&gt;
+&lt;/script&gt;
+</code></pre>
+
+<p><small>
+Замените <code>{ARTICLE_ID}</code> на ID статьи/страницы у издателя.
+Если не нужен, можно удалить атрибут <code>data-article-id</code>.
+</small></p>
+
+<h2>Площадки (placements)</h2>
+
+<table class="table">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Article ID</th>
+      <th>URL pattern</th>
+      <th>Видео</th>
+      <th>Статус</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for placement in placements %}
+    <tr>
+      <td>{{ placement.id }}</td>
+      <td>{{ placement.external_article_id or '' }}</td>
+      <td>{{ placement.page_url_pattern or '' }}</td>
+      <td>{{ placement.video.title if placement.video else '' }}</td>
+      <td>{{ placement.status }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<p><a href="{{ request.url_for('publisher_sites') }}">&larr; Назад к списку сайтов</a></p>
+{% endblock %}

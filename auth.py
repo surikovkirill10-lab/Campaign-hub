@@ -17,7 +17,6 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
 router = APIRouter()
 
 
-
 def get_db() -> Generator[sqlite3.Connection, None, None]:
     """Dependency: даёт подключение к SQLite и аккуратно его закрывает."""
     conn = sqlite3.connect(DATABASE_PATH)
@@ -39,6 +38,17 @@ def get_current_user(
     request: Request,
     db: sqlite3.Connection = Depends(get_db),
 ):
+    """
+    Возвращает текущего пользователя как dict:
+    {
+        "id": ...,
+        "login": ...,
+        "role_code": ...,
+        "role_name": ...,
+        ...
+    }
+    Если не залогинен или юзер неактивен — кидает 302 на /auth/login.
+    """
     user_id = request.session.get("user_id")
     if not user_id:
         # не залогинен — на логин
@@ -56,8 +66,8 @@ def get_current_user(
         """,
         (user_id,),
     )
-    user = cur.fetchone()
-    if not user:
+    row = cur.fetchone()
+    if not row:
         # юзер удалён/заблокирован — чистим и на логин
         request.session.clear()
         raise HTTPException(
@@ -65,7 +75,11 @@ def get_current_user(
             headers={"Location": "/auth/login"},
         )
 
+    # приводим sqlite3.Row к обычному dict, чтобы
+    # и Jinja, и новый код (publisher_widget) могли спокойно работать
+    user = dict(row)
     return user
+
 
 ModuleAction = Literal["view", "edit"]
 

@@ -1,0 +1,143 @@
+{% extends "Sales.html" %}
+
+{% block sales_content %}
+
+<style>
+  #toolbar{ max-width:100%; overflow:visible; box-sizing:border-box; }
+  #toolbar .field.is-grouped{ flex-wrap: wrap; gap: .5rem .5rem; }
+  #toolbar .control.is-expanded{ flex:1 1 260px; min-width:260px; }
+  #toolbar .control{ flex:0 0 auto; }
+
+  #computations-table{ overflow-x:auto; overflow-y:visible; position:relative; -webkit-overflow-scrolling:touch; }
+  #computations-table > table{ width:max-content; min-width:1200px; }
+  #computations-table thead th{ position:sticky; top:0; z-index:4; background:#fff; box-shadow:0 1px 0 rgba(0,0,0,.06); }
+  #computations-table th, #computations-table td{ white-space:nowrap; }
+  #computations-table td:nth-child(2){ white-space:normal; }
+  #computations-table td:nth-child(2) .name-wrap{
+    display:inline-block;
+    max-width: 40ch;
+    white-space: normal;
+    overflow-wrap:anywhere;
+    word-break: break-word;
+    line-height:1.2;
+  }
+</style>
+
+<h1 class="title is-4">Расчёты медиапланов</h1>
+
+<div class="box p-3" id="toolbar">
+  <form id="filters"
+        class="mb-2"
+        hx-get="/sales/computations"
+        hx-target="#computations-table"
+        hx-select="#computations-table"
+        hx-swap="outerHTML"
+        hx-push-url="true">
+
+    <div class="field is-grouped is-grouped-multiline is-align-items-center">
+      <div class="control is-expanded" style="min-width:16rem">
+        <input class="input is-small"
+               type="text"
+               name="q"
+               value="{{ q or '' }}"
+               placeholder="Поиск: клиент / бренд / название РК"
+               hx-trigger="keyup changed delay:300ms" />
+      </div>
+
+      <div class="control">
+        <input class="input is-small"
+               type="month"
+               name="period"
+               value="{{ period or '' }}" />
+      </div>
+
+      <div class="control">
+        <div class="select is-small">
+          <select name="sort" hx-trigger="change">
+            <option value="created_at"   {{ 'selected' if (sort or 'created_at')=='created_at' }}>Дата расчёта</option>
+            <option value="id"           {{ 'selected' if sort=='id' }}>ID</option>
+            <option value="campaign_name"{{ 'selected' if sort=='campaign_name' }}>Название РК</option>
+            <option value="client"       {{ 'selected' if sort=='client' }}>Клиент</option>
+            <option value="brand"        {{ 'selected' if sort=='brand' }}>Бренд</option>
+            <option value="period_start" {{ 'selected' if sort=='period_start' }}>Старт периода</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="control">
+        <div class="select is-small">
+          <select name="dir" hx-trigger="change">
+            <option value="desc" {{ 'selected' if (dir or 'desc')=='desc' }}>По убыванию</option>
+            <option value="asc"  {{ 'selected' if dir=='asc' }}>По возрастанию</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="control">
+        <button class="button is-small">Применить</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<div id="computations-table">
+  <table class="table is-striped is-fullwidth">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Название РК</th>
+        <th>Клиент</th>
+        <th>Бренд</th>
+        <th>Агентство</th>
+        <th>Менеджер</th>
+        <th>Дата расчёта</th>
+        <th>Период</th>
+        <th>Режим</th>
+        <th>Бюджет (₽)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>{{ row.id }}</td>
+          <td>
+            <span class="name-wrap">{{ row.campaign_name or '—' }}</span>
+          </td>
+          <td>{{ row.client or '—' }}</td>
+          <td>{{ row.brand or '—' }}</td>
+          <td>{{ row.agency or '—' }}</td>
+          <td>{{ row.manager or '—' }}</td>
+          <td>
+            {% if row.created_at %}
+              {{ row.created_at.strftime("%d.%m.%Y %H:%M") }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>
+            {% if row.period_start and row.period_end %}
+              {{ row.period_start }} — {{ row.period_end }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>{{ row.mode or '—' }}</td>
+          <td>
+            {% if row.budget %}
+              {{ "{:,.0f}".format(row.budget).replace(",", " ") }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      {% if not rows %}
+        <tr>
+          <td colspan="10">Пока нет сохранённых расчётов.</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

@@ -1,32 +1,36 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Campaign Hub</title>
+  <meta charset="utf-8">
+  <title>{% block title %}Campaign Hub{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <!-- Bulma + HTMX -->
-    <link rel="stylesheet"
-          href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
-    <script src="https://unpkg.com/htmx.org@1.9.5"></script>
+  {# 1. Bulma с CDN по HTTPS #}
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
 
-    <!-- Твой общий CSS с топбаром / навигацией -->
-    <link rel="stylesheet"
-          href="{{ url_for('static', path='css/app.css') }}">
+  {# 2. Твой кастомный CSS (лежит в app/static/css/app.css) #}
+  <link rel="stylesheet"
+        href="{{ url_for('static', path='css/app.css') }}">
 
-    <script>
-      // Синхронизируем высоту шапки с CSS-переменной --topbar-h
-      (function () {
-        function setH() {
-          var bar = document.querySelector('.topbar');
-          if (!bar) return;
-          var h = Math.ceil(bar.getBoundingClientRect().height);
-          document.documentElement.style.setProperty('--topbar-h', h + 'px');
-        }
-        window.addEventListener('load', setH);
-        window.addEventListener('resize', setH);
-      })();
-    </script>
+  {# Дополнительные стили (если когда-нибудь понадобятся) #}
+  {% block extra_head %}{% endblock %}
+
+  <script>
+    // Синхронизируем высоту шапки с CSS-переменной --topbar-h
+    (function () {
+      function setH() {
+        var bar = document.querySelector('.topbar');
+        if (!bar) return;
+        var h = Math.ceil(bar.getBoundingClientRect().height);
+        document.documentElement.style.setProperty('--topbar-h', h + 'px');
+      }
+      window.addEventListener('load', setH);
+      window.addEventListener('resize', setH);
+    })();
+  </script>
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+
 </head>
 <body>
 
@@ -40,6 +44,10 @@
     </a>
 
     <nav class="topnav">
+      <a href="/sales"
+         class="{% if request.url.path.startswith('/sales') %}active{% endif %}">
+        Sales
+      </a>
       <a href="/bookings"
          class="{% if request.url.path.startswith('/bookings') %}active{% endif %}">
         Bookings
