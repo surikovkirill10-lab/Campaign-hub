@@ -30,7 +30,6 @@
     })();
   </script>
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
-
 </head>
 <body>
 
@@ -44,10 +43,6 @@
     </a>
 
     <nav class="topnav">
-      <a href="/sales"
-         class="{% if request.url.path.startswith('/sales') %}active{% endif %}">
-        Sales
-      </a>
       <a href="/bookings"
          class="{% if request.url.path.startswith('/bookings') %}active{% endif %}">
         Bookings
