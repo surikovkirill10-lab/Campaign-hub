@@ -1,6 +1,8 @@
 {% extends "layout.html" %}
 {% block content %}
-<!-- cmpx-patch: details-slider-v7 -->
+
+<!-- cmpx-patch: details-slider-v4 -->
+
 
 <style>
   :root{
@@ -24,66 +26,10 @@
     padding:.25rem 5px;
     box-shadow:0 -1px 0 rgba(0,0,0,.06);
   }
-/* === Classic (ChatGPT-like) gray rounded slider === */
-.cmpx-hscrollbar .cmpx-hslider{
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 18px;          /* даём место под трек/ползунок */
-  background: transparent;
-  cursor: pointer;
-}
-
-/* убираем лишний outline */
-.cmpx-hscrollbar .cmpx-hslider:focus{
-  outline: none;
-}
-
-/* TRACK (полоса) — Chrome/Safari/Edge */
-.cmpx-hscrollbar .cmpx-hslider::-webkit-slider-runnable-track{
-  height: 8px;
-  background: #e5e7eb;   /* светло-серый */
-  border-radius: 9999px;
-}
-
-/* THUMB (ползунок) — Chrome/Safari/Edge */
-.cmpx-hscrollbar .cmpx-hslider::-webkit-slider-thumb{
-  -webkit-appearance: none;
-  width: 52px;           /* "плашка" как у скроллбара */
-  height: 8px;
-  border-radius: 9999px;
-  background: #9ca3af;   /* серый ползунок */
-  margin-top: 0;         /* так как высота совпадает с треком */
-}
-
-/* TRACK — Firefox */
-.cmpx-hscrollbar .cmpx-hslider::-moz-range-track{
-  height: 8px;
-  background: #e5e7eb;
-  border-radius: 9999px;
-}
-
-/* THUMB — Firefox */
-.cmpx-hscrollbar .cmpx-hslider::-moz-range-thumb{
-  width: 52px;
-  height: 8px;
-  border: 0;
-  border-radius: 9999px;
-  background: #9ca3af;
-}
-
-/* Hover/active — чуть темнее */
-.cmpx-hscrollbar .cmpx-hslider:hover::-webkit-slider-thumb{ background:#6b7280; }
-.cmpx-hscrollbar .cmpx-hslider:hover::-moz-range-thumb{ background:#6b7280; }
-
-/* (опционально) очень лёгкий "фокус" */
-.cmpx-hscrollbar .cmpx-hslider:focus-visible::-webkit-slider-thumb{
-  box-shadow: 0 0 0 3px rgba(0,0,0,.10);
-}
-.cmpx-hscrollbar .cmpx-hslider:focus-visible::-moz-range-thumb{
-  box-shadow: 0 0 0 3px rgba(0,0,0,.10);
-}
-
+  .cmpx-hscrollbar input[type="range"]{
+    width:100%;
+    cursor:pointer;
+  }
 
   /* колонка Name (2-я) — фиксированная слева при горизонтальном скролле */
   #campaigns-table th:nth-child(2),
@@ -196,6 +142,29 @@
   }
   #campaigns-table td:nth-child(2){ white-space:normal; }
 
+  /* ===== Details горизонтальный скролл =====
+     Проблема: details-таблица широкая, но не всегда расширяет scrollWidth внешнего контейнера.
+     Решение: заворачиваем details-таблицу в .cmpx-details-xscroll и крутим её тем же ползунком. */
+  #campaigns-table td[id^="details-"] .cmpx-details-xscroll,
+  #campaigns-table td[id^="details-"] .table-container{
+    overflow-x: auto;
+    overflow-y: visible;
+    max-width: 100%;
+    width: 100%;
+    -webkit-overflow-scrolling: touch;
+  }
+  #campaigns-table td[id^="details-"] .cmpx-details-xscroll > table,
+  #campaigns-table td[id^="details-"] .table-container > table,
+  #campaigns-table td[id^="details-"] > table{
+    width: max-content !important;
+    display: inline-table;
+    max-width: none !important;
+  }
+  #campaigns-table td[id^="details-"] table th,
+  #campaigns-table td[id^="details-"] table td{
+    white-space: nowrap;
+  }
+
   #campaigns-table thead th{
   position: sticky;
   top: 0;          /* или вообще убрать sticky, если не нужна липкая шапка */
@@ -221,25 +190,6 @@
   #toolbar .select.is-small select,
   #toolbar .button.is-small{ height:2.25em; }
   #toolbar .mb-2{ margin-bottom:.5rem; }
-
-  /* Details: отдельный горизонтальный скролл внутри раскрытой строки (для последних колонок) */
-  #campaigns-table td[id^="details-"] .cmpx-details-xscroll{
-    overflow-x: auto;
-    overflow-y: visible;
-    width: 100%;
-    max-width: 100%;
-    -webkit-overflow-scrolling: touch;
-  }
-  #campaigns-table td[id^="details-"] .cmpx-details-xscroll > table{
-    width: max-content !important;
-    display: inline-table;
-    max-width: none !important;
-  }
-  #campaigns-table td[id^="details-"] .cmpx-details-xscroll th,
-  #campaigns-table td[id^="details-"] .cmpx-details-xscroll td{
-    white-space: nowrap;
-  }
-
 </style>
 
 <div class="cmpx-layout">
@@ -371,7 +321,7 @@
              data-target="#campaigns-table"
              min="0"
              value="0"
-             step="1"
+             step="10"
              max="500" />
     </div>
 
@@ -479,83 +429,66 @@
     </div>
 
     <script>
-      // cmpx: details-slider-v7
-      // Один ползунок управляет горизонтальным скроллом:
-      //  - основной таблицы (#campaigns-table)
-      //  - и внутренних X-scroll контейнеров в details (td#details-...),
-      // чтобы можно было докрутить до самых последних колонок details.
+      // общий скрипт для ползунков горизонтального скролла
       (function(){
-        const DETAILS_TD_SEL = 'td[id^="details-"]';
-        const DETAILS_WRAP_CLASS = 'cmpx-details-xscroll';
-
-        function clamp(n, lo, hi){
-          n = Number.isFinite(n) ? n : 0;
-          return Math.max(lo, Math.min(hi, n));
-        }
-
         function maxScrollX(el){
-          try{
-            return Math.max(0, (el.scrollWidth || 0) - (el.clientWidth || 0));
-          }catch(e){
-            return 0;
-          }
+          try{ return Math.max(0, (el.scrollWidth || 0) - (el.clientWidth || 0)); }
+          catch(e){ return 0; }
         }
 
         function ensureDetailsXScroll(td){
+          // td — это <td id="details-...">, который приходит из /daily5 или /daily_empty
           if (!td || !td.id || !td.id.startsWith('details-')) return;
 
-          // уже обёрнуто
-          if (td.querySelector(':scope > .' + DETAILS_WRAP_CLASS)) return;
+          // Если уже есть скролл-обёртка — ничего не делаем
+          if (td.querySelector('.cmpx-details-xscroll')) return;
 
-          // если пришёл Bulma .table-container как прямой ребёнок — используем его
-          const directTC = td.querySelector(':scope > .table-container');
-          if (directTC){
-            directTC.classList.add(DETAILS_WRAP_CLASS);
+          // Иногда details приходит в Bulma .table-container — используем её как скролл-контейнер
+          const tc = td.querySelector('.table-container');
+          if (tc){
+            tc.classList.add('cmpx-details-xscroll');
             return;
           }
 
-          // Обычно daily5 возвращает: <td ...><table ...>...</table></td>
-          let table = td.querySelector(':scope > table');
-          if (!table){
-            // fallback: любой table внутри (на случай обёрток)
-            table = td.querySelector('table');
-          }
+          // Обычный кейс: в td лежит таблица (прямо или глубже)
+          const table = td.querySelector('table');
           if (!table) return;
 
           const wrap = document.createElement('div');
-          wrap.className = DETAILS_WRAP_CLASS;
-
-          // переносим таблицу в wrapper
+          wrap.className = 'cmpx-details-xscroll';
           table.parentNode.insertBefore(wrap, table);
           wrap.appendChild(table);
         }
 
         function wrapAllDetails(root){
           const scope = root || document;
-          scope.querySelectorAll(DETAILS_TD_SEL).forEach(ensureDetailsXScroll);
+          scope.querySelectorAll('td[id^="details-"]').forEach(ensureDetailsXScroll);
         }
 
         function collectScrollTargets(slider){
           const targets = [];
 
-          // main container
+          // основной контейнер таблицы кампаний
           const mainSel = slider.dataset.target;
           if (mainSel){
             const main = document.querySelector(mainSel);
             if (main) targets.push(main);
           }
 
-          // details wrappers (direct children) + на всякий table-container
-          document
-            .querySelectorAll(
-              '#campaigns-table ' + DETAILS_TD_SEL + ' > .' + DETAILS_WRAP_CLASS + ',' +
-              '#campaigns-table ' + DETAILS_TD_SEL + ' > .table-container'
-            )
+          // любые уже раскрытые details (наш wrapper или Bulma table-container)
+          document.querySelectorAll('#campaigns-table td[id^="details-"] .cmpx-details-xscroll')
             .forEach(function(el){ targets.push(el); });
+
+          // fallback: если по какой-то причине wrapper не появился, но есть table-container
+          document.querySelectorAll('#campaigns-table td[id^="details-"] .table-container')
+            .forEach(function(el){
+              if (!el.classList.contains('cmpx-details-xscroll')) targets.push(el);
+            });
 
           return targets;
         }
 
+        
         function recalcSlider(slider){
           const targets = collectScrollTargets(slider);
           let trueMax = 0;
@@ -567,19 +500,49 @@
             if ((el.scrollLeft || 0) > cur) cur = (el.scrollLeft || 0);
           });
 
-          slider.max = trueMax;
+          const step = Math.max(1, parseFloat(slider.step) || 1);
+          // ВАЖНО: range с step=10 и max=687 не даст выставить 687 (только 680).
+          // Поэтому округляем max вверх до кратного step (напр. 690) и при скролле клэмпим.
+          const uiMax = Math.ceil(trueMax / step) * step;
+
+          slider.max = uiMax;
           slider.disabled = trueMax <= 0;
-          slider.value = clamp(cur, 0, trueMax);
+
+          // синхронизируем положение ползунка с текущим scrollLeft (в шагах step)
+          slider.value = Math.min(uiMax, Math.round(cur / step) * step);
         }
 
         function scrollAll(slider, value){
-          const v = Number(value) || 0;
           const targets = collectScrollTargets(slider);
-
           targets.forEach(function(el){
             const m = maxScrollX(el);
-            el.scrollLeft = clamp(v, 0, m);
+            el.scrollLeft = Math.min(value, m);
           });
+        }
+
+        function attachSlider(slider){
+          // нормализуем шаг: 10 удобно, но max округляем вверх (см. recalcSlider)
+          if (!slider.step) slider.step = '10';
+          // первичная инициализация
+          recalcSlider(slider);
+
+          slider.addEventListener('input', function(){
+            scrollAll(slider, +slider.value);
+          });
+
+          // если кто-то скроллит мышью/тачпадом — подтягиваем положение ползунка
+          const mainSel = slider.dataset.target;
+          if (mainSel){
+            const main = document.querySelector(mainSel);
+            if (main){
+              main.addEventListener('scroll', function(){
+                const step = Math.max(1, parseFloat(slider.step) || 1);
+                slider.value = Math.min(+slider.max || 0, Math.round((main.scrollLeft || 0) / step) * step);
+              }, {passive:true});
+            }
+          }
+
+          window.addEventListener('resize', function(){ recalcSlider(slider); });
         }
 
         // замеряем высоту блока с ползунком и передаём её в CSS‑переменную
@@ -590,97 +553,48 @@
           document.documentElement.style.setProperty('--hscroll-h', h + 'px');
         }
 
-        function syncAfterDomChange(){
+        function initAll(){
+          document.querySelectorAll('.cmpx-hslider').forEach(attachSlider);
+          updateHScrollHeight();
+
+          // если details уже в DOM (редко) — оборачиваем
           wrapAllDetails(document);
 
-          const slider = document.querySelector('.cmpx-hslider');
-          if (!slider) return;
-
-          // сначала пересчёт max
-          recalcSlider(slider);
-          // затем синхронизация новых details к текущему положению ползунка
-          scrollAll(slider, slider.value);
-          // и ещё раз пересчёт (на всякий)
-          recalcSlider(slider);
-
-          updateHScrollHeight();
-        }
-
-        function attachSlider(slider){
-          // гарантируем точный ход
-          slider.step = '1';
-
-          recalcSlider(slider);
-
-          slider.addEventListener('input', function(){
-            scrollAll(slider, slider.value);
-          });
-
-          // если пользователь скроллит мышью/тачпадом по main — синхронизируем ползунок
-          const mainSel = slider.dataset.target;
-          const main = mainSel ? document.querySelector(mainSel) : null;
-          if (main){
-            main.addEventListener('scroll', function(){
-              slider.value = clamp(main.scrollLeft || 0, 0, Number(slider.max) || 0);
-            }, {passive:true});
-          }
-
-          window.addEventListener('resize', function(){
-            syncAfterDomChange();
-          });
-        }
-
-        function initAll(){
-          syncAfterDomChange();
-          document.querySelectorAll('.cmpx-hslider').forEach(attachSlider);
+          // пересчитываем max
+          document.querySelectorAll('.cmpx-hslider').forEach(recalcSlider);
         }
 
         document.addEventListener('DOMContentLoaded', initAll);
         window.addEventListener('resize', updateHScrollHeight);
 
-        // 1) Слушаем htmx события БЕЗ проверки window.htmx (htmx может загрузиться позже)
-        document.addEventListener('htmx:afterSwap', function(){
-          requestAnimationFrame(syncAfterDomChange);
-        });
-        document.addEventListener('htmx:afterSettle', function(){
-          requestAnimationFrame(syncAfterDomChange);
-        });
+        if (window.htmx){
+          // На любой swap: оборачиваем details и пересчитываем max
+          document.body.addEventListener('htmx:afterSwap', function(evt){
+            requestAnimationFrame(function(){
+              wrapAllDetails(document);
 
-        // 2) Доп. страховка: MutationObserver на случай, если htmx события не ловятся
-        (function installObserver(){
-          const root = document.querySelector('#campaigns-table') || document.body;
-          if (!root || root._cmpxObs) return;
-
-          const obs = new MutationObserver(function(muts){
-            let touched = false;
-
-            muts.forEach(function(m){
-              m.addedNodes.forEach(function(node){
-                if (!node || node.nodeType !== 1) return;
-                const el = node;
-
-                if (el.matches && el.matches(DETAILS_TD_SEL)){
-                  ensureDetailsXScroll(el);
-                  touched = true;
-                }
-
-                if (el.querySelectorAll){
-                  el.querySelectorAll(DETAILS_TD_SEL).forEach(function(td){
-                    ensureDetailsXScroll(td);
-                    touched = true;
-                  });
-                }
-              });
+              const slider = document.querySelector('.cmpx-hslider');
+              if (slider){
+                // синхронизируем newly created details-scroll с текущим положением ползунка
+                scrollAll(slider, +slider.value || 0);
+                recalcSlider(slider);
+              } else {
+                document.querySelectorAll('.cmpx-hslider').forEach(recalcSlider);
+              }
+              updateHScrollHeight();
             });
-
-            if (touched){
-              requestAnimationFrame(syncAfterDomChange);
-            }
           });
 
-          obs.observe(root, {childList:true, subtree:true});
-          root._cmpxObs = obs;
-        })();
+          // afterSettle иногда полезнее, если размеры "доезжают" после вставки
+          document.body.addEventListener('htmx:afterSettle', function(){
+            const slider = document.querySelector('.cmpx-hslider');
+            if (!slider) return;
+            requestAnimationFrame(function(){
+              wrapAllDetails(document);
+              recalcSlider(slider);
+            });
+          });
+        }
       })();
     </script>
 

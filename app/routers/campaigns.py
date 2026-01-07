@@ -26,6 +26,31 @@ templates = Jinja2Templates(directory="app/templates")
 
 
 
+# ----------------- для починки директорий -------------------
+
+def _ensure_campaigns_table() -> None:
+    """Единый источник истины: campaigns в основной БД, куда смотрит SQLAlchemy engine."""
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS campaigns (
+                id   INTEGER PRIMARY KEY,
+                name TEXT
+            );
+        """))
+
+
+def _upsert_campaign(cid: int, name: str) -> None:
+    """Добавить/обновить кампанию в основной БД (engine)."""
+    _ensure_campaigns_table()
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO campaigns (id, name)
+            VALUES (:id, :name)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name
+        """), {"id": int(cid), "name": (name or "").strip()})
+
+
 
 # ------------------ утилиты ------------------
 
@@ -349,19 +374,24 @@ def _campaign_totals(cid: int):
     }
 
 def _fetch_all_campaigns_from_db():
-    dbp = os.path.join(os.getcwd(), "campaign_hub.db")
-    con = sqlite3.connect(dbp)
-    cur = con.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS campaigns (id INTEGER PRIMARY KEY, name TEXT)")
-    rows = cur.execute("SELECT id, COALESCE(name,'') FROM campaigns").fetchall()
-    con.close()
+    """
+    Читаем campaigns ТОЛЬКО из основной БД (engine).
+    Возвращаем объекты с теми же полями, что использует UI campaigns.html.
+    """
+    _ensure_campaigns_table()
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("SELECT id, COALESCE(name,'') AS name FROM campaigns")
+        ).fetchall()
 
-    class C: pass
+    class C:
+        pass
+
     cs = []
     for cid, cname in rows:
         o = C()
-        o.id = cid
-        o.name = cname
+        o.id = int(cid) if cid is not None else None
+        o.name = cname or ""
         o.min_date = None
         o.max_date = None
         o.impressions = None
@@ -374,19 +404,9 @@ def _fetch_all_campaigns_from_db():
         cs.append(o)
     return cs
 
+
 def _ensure_list():
-    """Пробуем взять из app.services.crud, иначе читаем SQLite напрямую."""
-    campaigns = []
-    try:
-        from app.services import crud
-        if hasattr(crud, "list"):
-            campaigns = crud.list()
-        elif hasattr(crud, "list_campaigns"):
-            campaigns = crud.list_campaigns()
-    except Exception:
-        pass
-    if campaigns:
-        return campaigns
+    """Единый источник истины — campaigns из основной БД (engine)."""
     return _fetch_all_campaigns_from_db()
 
 def _update_name(cid: int, name: str):
@@ -1232,25 +1252,10 @@ def campaigns_list_view(request: Request):
     })
 
 
+
 @router.post("/campaigns", response_class=HTMLResponse)
 def campaigns_add(id: int = Form(...), name: str = Form(...)):
-    try:
-        from app.services import crud
-        if hasattr(crud, "add"):
-            crud.add(id=id, name=name)
-        elif hasattr(crud, "add_campaign"):
-            crud.add_campaign(id=id, name=name)
-        else:
-            raise RuntimeError("crud.add not found")
-    except Exception:
-        # fallback в локальную SQLite
-        import sqlite3, os
-        dbp = os.path.join(os.getcwd(), "campaign_hub.db")
-        con = sqlite3.connect(dbp)
-        cur = con.cursor()
-        cur.execute("CREATE TABLE IF NOT EXISTS campaigns (id INTEGER PRIMARY KEY, name TEXT)")
-        cur.execute("INSERT OR IGNORE INTO campaigns (id, name) VALUES (?,?)", (id, name))
-        con.commit(); con.close()
+    _upsert_campaign(int(id), name)
     return RedirectResponse(url="/campaigns", status_code=303)
 
 
@@ -1405,9 +1410,10 @@ def campaigns_import_cats():
     if not pairs:
         return msg_row("No campaigns in export.", "is-light")
 
-    # 6) Добавляем только новые
+    # 6) Добавляем только новые (через engine)
     existing = set(int(getattr(c, "id")) for c in _ensure_list())
     new_ids = []
+
     for cid, name in pairs:
         n = (name or "").strip().lower()
         if "foxible" in n or "test" in n or "тест" in n:
@@ -1415,23 +1421,10 @@ def campaigns_import_cats():
 
         if cid in existing or cid in new_ids:
             continue
+
         try:
-            try:
-                from app.services import crud
-                if hasattr(crud, "add"):
-                    crud.add(id=cid, name=name)
-                elif hasattr(crud, "add_campaign"):
-                    crud.add_campaign(id=cid, name=name)
-                else:
-                    raise RuntimeError("crud.add not found")
-            except Exception:
-                dbp = os.path.join(os.getcwd(), "campaign_hub.db")
-                con = sqlite3.connect(dbp)
-                cur = con.cursor()
-                cur.execute("CREATE TABLE IF NOT EXISTS campaigns (id INTEGER PRIMARY KEY, name TEXT)")
-                cur.execute("INSERT OR IGNORE INTO campaigns (id, name) VALUES (?,?)", (cid, name))
-                con.commit(); con.close()
-            new_ids.append(cid)
+            _upsert_campaign(int(cid), name)
+            new_ids.append(int(cid))
         except Exception:
             print("Import row failed:\n", traceback.format_exc())
 
@@ -1451,9 +1444,6 @@ def campaigns_import_cats():
         html_parts.append(row_resp.body.decode("utf-8", errors="ignore"))
 
     return HTMLResponse("".join(html_parts))
-
-
-
 
 
 @router.get("/campaigns/{cid}/row", response_class=HTMLResponse)

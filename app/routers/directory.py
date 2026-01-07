@@ -1,20 +1,18 @@
 """Routes for the directory (campaign/mail rule mappings)."""
 from __future__ import annotations
+
 from pathlib import Path
-from html import escape
+from types import SimpleNamespace
 import sys
 import subprocess
 
 import yaml
-from fastapi import APIRouter, Depends, Request, Body, UploadFile, File, Form
+from fastapi import APIRouter, Request, Body, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
-from fastapi.concurrency import run_in_threadpool
-from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from ..database import get_db, engine
-from ..crud import get_campaigns
+from ..database import engine
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
@@ -25,23 +23,44 @@ MP_DATA_DIR = BASE_DIR / "data" / "mediaplanner"
 
 
 def _load_cfg() -> dict:
-  try:
-    return yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
-  except FileNotFoundError:
-    return {}
-  except Exception:
-    return {}
+    try:
+        return yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        return {}
 
 
 def _save_cfg(cfg: dict) -> None:
-  CONFIG_PATH.write_text(
-    yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False),
-    encoding="utf-8",
-  )
+    CONFIG_PATH.write_text(
+        yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
+
+# --- campaigns: единый источник истины через engine ---
+
+def _ensure_campaigns_table() -> None:
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS campaigns (
+                id   INTEGER PRIMARY KEY,
+                name TEXT
+            );
+        """))
+
+
+def _list_campaigns():
+    _ensure_campaigns_table()
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("SELECT id, COALESCE(name,'') AS name FROM campaigns")
+        ).fetchall()
+    return [SimpleNamespace(id=int(r[0]), name=(r[1] or "")) for r in rows]
 
 
 @router.get("/directory", response_class=HTMLResponse)
-def view_directory(request: Request, db: Session = Depends(get_db)):
+def view_directory(request: Request):
     # --- параметры фильтрации/сортировки из query ---
     params = request.query_params
     q = (params.get("q") or "").strip()
@@ -49,9 +68,8 @@ def view_directory(request: Request, db: Session = Depends(get_db)):
     dir_ = params.get("dir") or "desc"
     reverse = (dir_ != "asc")
 
-    # --- кампании ---
-    # базовый список из crud, как раньше
-    campaigns = list(get_campaigns(db))
+    # --- кампании (теперь из engine, а не из crud/get_db) ---
+    campaigns = _list_campaigns()
 
     # поиск по ID / имени кампании
     q_lower = q.lower()
@@ -180,6 +198,8 @@ def view_directory(request: Request, db: Session = Depends(get_db)):
             "dir": dir_,
         },
     )
+
+
 # --- NEW: Media planner settings page ---
 
 @router.get("/directory/mediaplanner", response_class=HTMLResponse)
@@ -229,8 +249,6 @@ async def upload_template(file: UploadFile = File(...)) -> HTMLResponse:
     return HTMLResponse('<span class="tag is-success is-light">Шаблон медиаплана обновлён</span>')
 
 
-
-
 @router.post("/directory/mediaplanner/save_keys", response_class=HTMLResponse)
 async def save_mediaplanner_keys(
     api_key: str = Form(""),
@@ -251,6 +269,7 @@ async def save_mediaplanner_keys(
     _save_cfg(cfg)
 
     return HTMLResponse('<span class="tag is-success is-light">Ключи сохранены</span>')
+
 
 @router.post("/directory/yandex/update")
 async def save_yandex_name(payload: dict = Body(...)):
