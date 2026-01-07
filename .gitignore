@@ -31,3 +31,12 @@ __pycache__/
 venv/
 .venv/
 config.yaml
+
+# runtime/data
+.venv/
+.env
+config.yaml
+*.db
+*.sqlite*
+data/cats/
+data/mediaplanner/*.xlsx
